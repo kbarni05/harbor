@@ -11,6 +11,10 @@ on:
         description: Read diagnostics from a completed build job instead of building
         type: string
         default: ""
+      existing_build_run_id:
+        description: Repackage a preserved Windows build instead of compiling again
+        type: string
+        default: ""
   push:
     tags:
       - "v*"
@@ -78,11 +82,16 @@ jobs:
           PY
 
   windows-installer:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_only && inputs.build_log_job_id == '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.windows_only || inputs.existing_build_run_id != '') && inputs.build_log_job_id == '' }}
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/windows-installer.yml
+    with:
+      existing_build_run_id: ${{ inputs.existing_build_run_id }}
 
   build:
-    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.windows_only && inputs.build_log_job_id == '') }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.windows_only && inputs.build_log_job_id == '' && inputs.existing_build_run_id == '') }}
     name: ${{ matrix.platform.name }} (${{ matrix.platform.target }})
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 120
