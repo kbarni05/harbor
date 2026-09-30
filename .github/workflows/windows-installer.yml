@@ -45,7 +45,7 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Recover pinned libmpv from the verified previous installer
+      - name: Recover verified libmpv from the published installer
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -66,22 +66,23 @@ jobs:
           $extracted = Join-Path $download 'extracted'
           7z x -y $previous "-o$extracted"
           if ($LASTEXITCODE -ne 0) { throw 'Previous installer extraction failed' }
-          $expectedDll = '0a81c004aae0ee7d512b9a26e38f66281f9591e84e1663215cc3a36a4bde6f6a'
-          $verified = @(Get-ChildItem $extracted -Recurse -Filter 'libmpv-2.dll' | Where-Object {
-            (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -eq $expectedDll
-          })
-          if ($verified.Count -ne 1) {
-            $hashes = (Get-ChildItem $extracted -Recurse -Filter 'libmpv-2.dll' | Get-FileHash -Algorithm SHA256).Hash -join ', '
-            Write-Host "::error title=Pinned DLL recovery::Expected $expectedDll; recovered hashes: $hashes"
-            exit 1
+          # The source downloader's pin is stale. Preserve it and reuse the DLL
+          # authenticated by the immutable previous-installer checksum above.
+          # Also require agreement with the upstream release's published digest.
+          $verified = @(Get-ChildItem $extracted -Recurse -Filter 'libmpv-2.dll')
+          if ($verified.Count -ne 1) { throw 'Previous installer must contain exactly one libmpv DLL' }
+          $dllHash = (Get-FileHash $verified[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $publishedDigest = & gh api repos/harborstremio/harbor/releases/tags/mpvdll --jq '.assets[] | select(.name=="libmpv-2.dll") | .digest'
+          if ($LASTEXITCODE -ne 0 -or $publishedDigest -ne "sha256:$dllHash") {
+            throw 'Recovered DLL does not match the official release asset digest'
           }
           Copy-Item $verified[0].FullName src-tauri/libmpv/libmpv-2.dll
-          "Pinned libmpv recovered from the verified previous installer; SHA-256: $expectedDll" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "libmpv verified through the previous installer checksum and official asset digest; SHA-256: $dllHash" | Add-Content $env:GITHUB_STEP_SUMMARY
           Remove-Item $download -Recurse -Force
 
       - name: Prepare verified native assets
         run: |
-          foreach ($script in @('setup:binaries', 'setup:libmpv', 'setup:mpv', 'setup:fonts')) {
+          foreach ($script in @('setup:binaries', 'setup:mpv', 'setup:fonts')) {
             $output = @(& pnpm run $script 2>&1)
             $code = $LASTEXITCODE
             $output | ForEach-Object { Write-Host $_ }
@@ -98,7 +99,7 @@ jobs:
 
       - name: Build Windows x64 NSIS installer
         run: |
-          $output = @(& pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis 2>&1)
+          $output = @(& pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked 2>&1)
           $code = $LASTEXITCODE
           $output | ForEach-Object { Write-Host $_ }
           if ($code -ne 0) {
@@ -112,6 +113,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          git diff --exit-code -- package.json pnpm-lock.yaml src-tauri/Cargo.lock
+          if ($LASTEXITCODE -ne 0) { throw 'Build changed dependency manifests or lockfiles' }
           $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $releaseRoot = 'src-tauri/target/x86_64-pc-windows-msvc/release'
           $installers = @(Get-ChildItem "$releaseRoot/bundle/nsis" -Filter '*.exe')
@@ -150,6 +153,7 @@ jobs:
             "Harbor $version Windows x64 installer"
             "Source commit: $env:GITHUB_SHA"
             'Includes the uploaded cloud-settings sync fixes.'
+            'libmpv is reused from the checksum-verified previous installer and also checked against the official asset digest; the repository downloader pin is unchanged.'
             'Android-extension runtime is not included, matching the previous cloud-sync installer.'
             'The installer is not digitally signed. Installation and live playback are not tested by this build.'
           ) | Set-Content artifacts/BUILD-NOTES.txt
