@@ -7,6 +7,10 @@ on:
         description: Build the verified Windows installer only
         type: boolean
         default: false
+      build_log_job_id:
+        description: Read diagnostics from a completed build job instead of building
+        type: string
+        default: ""
   push:
     tags:
       - "v*"
@@ -23,12 +27,43 @@ env:
   HARBOR_CAPSTAN_OPTIONAL: "1"
 
 jobs:
+  build-log-diagnostics:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_log_job_id != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Read completed build diagnostics
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_LOG_JOB_ID: ${{ inputs.build_log_job_id }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess
+          job = os.environ['BUILD_LOG_JOB_ID']
+          if not re.fullmatch(r'[0-9]{1,20}', job):
+              raise SystemExit('Expected a numeric job ID')
+          result = subprocess.run(
+              ['gh', 'api', f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/jobs/{job}/logs"],
+              capture_output=True, text=True,
+          )
+          log = result.stdout if result.returncode == 0 else result.stderr
+          log = re.sub(r'https?://[^\s"<>]+', lambda match: '[URL host: ' + match.group(0).split('/')[2] + ']', log)
+          lines = log.splitlines()
+          errors = [index for index, line in enumerate(lines) if '##[error]' in line]
+          selected = '\n'.join(lines[max(0, errors[-1] - 12):errors[-1] + 5]) if errors else '\n'.join(lines[-40:])
+          print(selected)
+          message = selected.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print(f'::notice title=Completed build diagnostics::{message}')
+          raise SystemExit(result.returncode)
+          PY
+
   windows-installer:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_only }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_only && inputs.build_log_job_id == '' }}
     uses: ./.github/workflows/windows-installer.yml
 
   build:
-    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.windows_only }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.windows_only && inputs.build_log_job_id == '') }}
     name: ${{ matrix.platform.name }} (${{ matrix.platform.target }})
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 120
