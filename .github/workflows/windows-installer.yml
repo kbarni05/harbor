@@ -17,9 +17,14 @@ jobs:
       # Match the previously published cloud-sync installer. This build explicitly
       # omits the unavailable extension runtime instead of shipping an unverified one.
       HARBOR_CAPSTAN_OPTIONAL: "1"
-      HARBOR_CAPSTAN_SRC: ${{ runner.temp }}/harbor-extension-runtime-unavailable
     steps:
       - uses: actions/checkout@v4
+
+      - name: Declare the unavailable extension runtime
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'harbor-extension-runtime-unavailable'
+          if (Test-Path $path) { throw 'Expected an absent extension-runtime source path' }
+          "HARBOR_CAPSTAN_SRC=$path" | Add-Content $env:GITHUB_ENV
 
       - uses: actions/setup-node@v4
         with:
