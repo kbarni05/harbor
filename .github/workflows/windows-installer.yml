@@ -45,6 +45,32 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Recover pinned libmpv from the verified previous installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $previousName = 'Harbor_0.9.127_cloud-settings-sync_no-extension-runtime_x64-setup.exe'
+          $download = Join-Path $env:RUNNER_TEMP 'harbor-previous-installer'
+          gh release download v0.9.127-cloud-sync.1 --repo $env:GITHUB_REPOSITORY --pattern $previousName --dir $download
+          if ($LASTEXITCODE -ne 0) { throw 'Previous installer download failed' }
+          $previous = Join-Path $download $previousName
+          $expectedInstaller = 'c5f295521b259d3cec98d6ad06ee12e8024816158ca2c5402d086ea3272d255e'
+          if ((Get-FileHash $previous -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedInstaller) {
+            throw 'Previous installer checksum mismatch'
+          }
+          $extracted = Join-Path $download 'extracted'
+          7z x -y $previous "-o$extracted"
+          if ($LASTEXITCODE -ne 0) { throw 'Previous installer extraction failed' }
+          $expectedDll = '0a81c004aae0ee7d512b9a26e38f66281f9591e84e1663215cc3a36a4bde6f6a'
+          $verified = @(Get-ChildItem $extracted -Recurse -Filter 'libmpv-2.dll' | Where-Object {
+            (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -eq $expectedDll
+          })
+          if ($verified.Count -ne 1) { throw 'Previous installer does not contain the pinned libmpv DLL' }
+          Copy-Item $verified[0].FullName src-tauri/libmpv/libmpv-2.dll
+          "Pinned libmpv recovered from the verified previous installer; SHA-256: $expectedDll" | Add-Content $env:GITHUB_STEP_SUMMARY
+          Remove-Item $download -Recurse -Force
+
       - name: Prepare verified native assets
         run: |
           foreach ($script in @('setup:binaries', 'setup:libmpv', 'setup:mpv', 'setup:fonts')) {
