@@ -12,7 +12,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     env:
-      CARGO_BUILD_JOBS: 2
+      CARGO_BUILD_JOBS: 4
+      CACHE_ON_FAILURE: "true"
       NODE_OPTIONS: --max-old-space-size=6144
       # Match the previously published cloud-sync installer. This build explicitly
       # omits the unavailable extension runtime instead of shipping an unverified one.
@@ -99,15 +100,29 @@ jobs:
 
       - name: Build Windows x64 NSIS installer
         run: |
-          $output = @(& pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked 2>&1)
+          Write-Host "Logical processors: $([Environment]::ProcessorCount)"
+          $output = [System.Collections.Generic.Queue[string]]::new()
+          & pnpm tauri build --config src-tauri/tauri.windows.conf.json --target x86_64-pc-windows-msvc --bundles nsis -- --locked 2>&1 | ForEach-Object {
+            $line = "$_"
+            Write-Host $line
+            $output.Enqueue($line)
+            if ($output.Count -gt 80) { $null = $output.Dequeue() }
+          }
           $code = $LASTEXITCODE
-          $output | ForEach-Object { Write-Host $_ }
           if ($code -ne 0) {
             $message = ($output | Select-Object -Last 80) -join "`n"
             $message = $message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
             Write-Host "::error title=Windows build::$message"
             exit $code
           }
+
+      - name: Preserve build output for packaging diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-build-output
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Verify and prepare installer artifact
         shell: pwsh
@@ -123,6 +138,7 @@ jobs:
           foreach ($exe in @($installer.FullName, "$releaseRoot/harbor.exe")) {
             $actual = (Get-Item $exe).VersionInfo.FileVersion
             if ($actual -ne $version -and $actual -ne "$version.0") {
+              Write-Host "::error title=Installer version validation::Wrong EXE version: $actual (expected $version)"
               throw "Wrong EXE version: $actual (expected $version)"
             }
           }
@@ -141,6 +157,8 @@ jobs:
             $matches = @(Get-ChildItem $extracted -Recurse -File | Where-Object Name -eq $name)
             $expectedHash = (Get-FileHash $inputs[$name] -Algorithm SHA256).Hash
             if (-not ($matches | Where-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash -eq $expectedHash })) {
+              $payloadNames = ((Get-ChildItem $extracted -Recurse -File).Name -join ', ')
+              Write-Host "::error title=Installer payload validation::Missing or stale: $name. Extracted files: $payloadNames"
               throw "Installer payload is missing or stale: $name"
             }
           }
