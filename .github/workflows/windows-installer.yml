@@ -1,0 +1,114 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: 2
+      NODE_OPTIONS: --max-old-space-size=6144
+      # Match the previously published cloud-sync installer. This build explicitly
+      # omits the unavailable extension runtime instead of shipping an unverified one.
+      HARBOR_CAPSTAN_OPTIONAL: "1"
+      HARBOR_CAPSTAN_SRC: ${{ runner.temp }}/harbor-extension-runtime-unavailable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare verified native assets
+        run: |
+          pnpm run setup:binaries
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm run setup:libmpv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm run setup:mpv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm run setup:fonts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify cloud-settings regression tests
+        run: node --experimental-loader ./scripts/node-test-loader.mjs --test tests/cloud-settings-sync.test.ts
+
+      - name: Build Windows x64 NSIS installer
+        run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis
+
+      - name: Verify and prepare installer artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $releaseRoot = 'src-tauri/target/x86_64-pc-windows-msvc/release'
+          $installers = @(Get-ChildItem "$releaseRoot/bundle/nsis" -Filter '*.exe')
+          if ($installers.Count -ne 1) { throw 'Expected exactly one Windows installer' }
+          $installer = $installers[0]
+          foreach ($exe in @($installer.FullName, "$releaseRoot/harbor.exe")) {
+            $actual = (Get-Item $exe).VersionInfo.FileVersion
+            if ($actual -ne $version -and $actual -ne "$version.0") {
+              throw "Wrong EXE version: $actual (expected $version)"
+            }
+          }
+          $extracted = Join-Path $env:RUNNER_TEMP 'harbor-installer-verification'
+          7z x -y $installer.FullName "-o$extracted"
+          if ($LASTEXITCODE -ne 0) { throw 'Installer payload extraction failed' }
+          $inputs = @{
+            'harbor.exe' = "$releaseRoot/harbor.exe"
+            'libmpv-2.dll' = 'src-tauri/libmpv/libmpv-2.dll'
+            'mpv.exe' = 'src-tauri/binaries/mpv-x86_64-pc-windows-msvc.exe'
+            'ffmpeg.exe' = 'src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe'
+            'ffprobe.exe' = 'src-tauri/binaries/ffprobe-x86_64-pc-windows-msvc.exe'
+            'yt-dlp.exe' = 'src-tauri/binaries/yt-dlp-x86_64-pc-windows-msvc.exe'
+          }
+          foreach ($name in $inputs.Keys) {
+            $matches = @(Get-ChildItem $extracted -Recurse -File | Where-Object Name -eq $name)
+            $expectedHash = (Get-FileHash $inputs[$name] -Algorithm SHA256).Hash
+            if (-not ($matches | Where-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash -eq $expectedHash })) {
+              throw "Installer payload is missing or stale: $name"
+            }
+          }
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          $name = "Harbor_${version}_cloud-sync_no-extension-runtime_x64-setup.exe"
+          Copy-Item $installer.FullName "artifacts/$name"
+          $hash = (Get-FileHash "artifacts/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $name" | Set-Content artifacts/SHA256SUMS.txt
+          @(
+            "Harbor $version Windows x64 installer"
+            "Source commit: $env:GITHUB_SHA"
+            'Includes the uploaded cloud-settings sync fixes.'
+            'Android-extension runtime is not included, matching the previous cloud-sync installer.'
+            'The installer is not digitally signed. Installation and live playback are not tested by this build.'
+          ) | Set-Content artifacts/BUILD-NOTES.txt
+          "## Verified Windows installer`n`nVersion: $version`n`nSource: $env:GITHUB_SHA`n`nSHA-256: $hash`n`nAndroid-extension runtime: not included." | Add-Content $env:GITHUB_STEP_SUMMARY
+          Write-Host "::notice title=Verified installer::Version $version; source $env:GITHUB_SHA; SHA-256 $hash; no Android-extension runtime."
+
+      - name: Upload verified Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: harbor-windows-x64-installer
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14

@@ -2,6 +2,11 @@ name: tauri-build
 
 on:
   workflow_dispatch:
+    inputs:
+      windows_only:
+        description: Build the verified Windows installer only
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
@@ -18,7 +23,12 @@ env:
   HARBOR_CAPSTAN_OPTIONAL: "1"
 
 jobs:
+  windows-installer:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_only }}
+    uses: ./.github/workflows/windows-installer.yml
+
   build:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.windows_only }}
     name: ${{ matrix.platform.name }} (${{ matrix.platform.target }})
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 120
