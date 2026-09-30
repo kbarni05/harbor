@@ -39,7 +39,7 @@ jobs:
           BUILD_LOG_JOB_ID: ${{ inputs.build_log_job_id }}
         run: |
           python3 - <<'PY'
-          import os, re, subprocess
+          import json, os, pathlib, re, subprocess, tempfile, zipfile
           job = os.environ['BUILD_LOG_JOB_ID']
           if not re.fullmatch(r'[0-9]{1,20}', job):
               raise SystemExit('Expected a numeric job ID')
@@ -56,6 +56,24 @@ jobs:
           print(selected)
           message = selected.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
           print(f'::notice title=Completed build diagnostics::{message}')
+          if result.returncode == 0:
+              job_info = json.loads(subprocess.check_output(['gh', 'api', f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/jobs/{job}"]))
+              artifacts = json.loads(subprocess.check_output(['gh', 'api', f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{job_info['run_id']}/artifacts"]))
+              for artifact in artifacts['artifacts']:
+                  if artifact['name'] != 'windows-installer-build-output':
+                      continue
+                  with tempfile.TemporaryDirectory() as directory:
+                      root = pathlib.Path(directory)
+                      with (root / 'artifact.zip').open('wb') as output:
+                          subprocess.run(['gh', 'api', '--allow-escape-sequences', f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/artifacts/{artifact['id']}/zip"], stdout=output, check=True)
+                      with zipfile.ZipFile(root / 'artifact.zip') as archive:
+                          archive.extractall(root / 'artifact')
+                      for installer in (root / 'artifact').rglob('*.exe'):
+                          listing = subprocess.check_output(['7z', 'l', '-slt', str(installer)], text=True)
+                          inventory = '\n'.join(line for line in listing.splitlines() if line.startswith(('Path = ', 'Size = ', 'Attributes = ')))
+                          print(inventory)
+                          message = inventory.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                          print(f'::notice title=Packaged file inventory::{message}')
           raise SystemExit(result.returncode)
           PY
 
