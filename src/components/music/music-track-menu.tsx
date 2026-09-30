@@ -6,13 +6,23 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Copy, Disc3, Download, ListPlus, Play, Plus, UserRound } from "lucide-react";
+import {
+  Copy,
+  Disc3,
+  ImageDown,
+  ListMusic,
+  ListPlus,
+  Play,
+  Plus,
+  UserRound,
+} from "@/components/icons/music-icons";
 import { MoreLikeThisIcon } from "@/components/icons/more-like-this-icon";
 import { AnchoredMenu } from "@/components/anchored-menu";
 import { useT } from "@/lib/i18n";
-import { downloadMusic } from "@/lib/music/downloads";
-import { musicSimilarTracks } from "@/lib/music/player";
-import { requestMusicExplore } from "@/lib/music/navigation";
+import { saveArtwork } from "@/lib/music/artwork-save";
+import { requestMusicExplore, requestMusicPlaylist } from "@/lib/music/navigation";
+import { getMusicPlaybackOrigin, musicTitleTarget } from "@/lib/music/playback-origin";
+import { getMusicState } from "@/lib/music/player";
 import { useArtistCredits } from "./use-artist-credits";
 import { useMusicNavigate } from "./music-navigate";
 import type { MusicTrack } from "@/lib/music/types";
@@ -47,13 +57,13 @@ export function useMusicTrackMenuItems(
   if (!track) return items;
   if (onPlay)
     items.push({ id: "play", label: t("music.play"), icon: <Play size={14} />, run: onPlay });
-  if (!["local", "spotify"].includes(track.connectorId ?? "")) {
+  if (track.artwork) {
     items.push({
-      id: "download",
-      label: t("music.download.action"),
-      icon: <Download size={14} />,
-      run: () => {
-        void downloadMusic(track).catch(() => {});
+      id: "artwork",
+      label: t("music.artwork.save"),
+      icon: <ImageDown size={14} />,
+      run: async () => {
+        await saveArtwork(track.artwork, track.album || track.title, track.artist);
       },
     });
   }
@@ -99,12 +109,7 @@ export function useMusicTrackMenuItems(
     id: "similar",
     label: t("music.card.moreLikeThis"),
     icon: <MoreLikeThisIcon size={14} />,
-    run:
-      onMoreLikeThis ??
-      (async () => {
-        const mix = await musicSimilarTracks(track);
-        requestMusicExplore({ kind: "similar", track, queue: mix });
-      }),
+    run: onMoreLikeThis ?? (() => requestMusicExplore({ kind: "similar", track })),
   });
   items.push({
     id: "copy",
@@ -121,6 +126,22 @@ export function useMusicTrackMenuItems(
       }
     },
   });
+  const playingFrom = musicTitleTarget(getMusicPlaybackOrigin());
+  if (playingFrom.kind !== "album") {
+    items.push({
+      id: "playing-from",
+      label: t("music.card.goToPlaying"),
+      icon: <ListMusic size={14} />,
+      run: () => {
+        if (playingFrom.kind === "playlist") {
+          requestMusicPlaylist(playingFrom.playlistId);
+          return;
+        }
+        const seed = getMusicState().current;
+        if (seed) requestMusicExplore({ kind: "similar", track: seed });
+      },
+    });
+  }
   return items;
 }
 

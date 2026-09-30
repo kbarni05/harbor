@@ -1,14 +1,15 @@
+import { recordMusicDestination } from "@/lib/music/recent-destinations";
 import { MusicVideoDiscovery } from "@/components/music/music-video-discovery";
 import { MusicArtistFilmography } from "@/components/music/music-artist-filmography";
 import { MusicTrackCredits } from "@/components/music/music-listening-details";
 import { MusicSoundtrackLink } from "@/components/music/music-soundtrack-link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowDownAZ,
   ChevronLeft,
   Clock3,
   Disc3,
-  ExternalLink,
+  Heart,
   ListMusic,
   ListPlus,
   LoaderCircle,
@@ -18,27 +19,36 @@ import {
   UserRound,
   Video,
   X,
-} from "lucide-react";
+} from "@/components/icons/music-icons";
 import { Dropdown } from "@/components/dropdown";
+import { HoverTooltip } from "@/components/hover-tooltip";
 import { MusicQualityBadge } from "@/components/music/music-quality-badge";
 import { MusicReleaseMetadata } from "@/components/music/music-release-metadata";
 import { MusicArtistOverview, MusicWhereToBuy } from "@/components/music/music-artist-overview";
 import { MusicArtistLink } from "@/components/music/music-artist-link";
+import { useMusicNavigate } from "@/components/music/music-navigate";
+import { MusicBillboardRank } from "@/components/music/music-billboard-rank";
 import { useMusicTrackContextMenu } from "@/components/music/music-track-menu";
 import {
   MusicArtistPlaylistNote,
   MusicTrackPlaylistChip,
 } from "@/components/music/music-playlist-chip";
 import { MusicCollectionControls } from "@/components/music/music-collection-controls";
+import { useMusicArtworkColor } from "@/lib/music/appearance";
+import { MusicArtistMenu } from "@/components/music/music-artist-menu";
+import { useBlockedArtistFilter } from "@/lib/music/artist-blocks";
+import { requestMusicExplore } from "@/lib/music/navigation";
+import { tracksOf } from "./music-band-types";
+import { MusicStickyTitle } from "@/components/music/music-sticky-title";
+import { toggleLikedArtist, useLikedArtist } from "@/lib/music/liked-artists";
 import { musicSourceLink } from "@/lib/music/source-link";
-import { MusicServiceLogo } from "@/components/music/music-service-logo";
-import { openUrl } from "@/lib/window";
 import { MusicTrackRow } from "@/components/music/music-track-row";
 import { MusicCardsSkeleton, MusicTrackRowsSkeleton } from "@/components/music/music-skeletons";
 import { MusicCatalogRow } from "@/components/music/music-catalog-row";
 import { Poster } from "@/components/poster";
 import { useMusicPlaylistPicker } from "@/components/music/music-playlist-picker";
-import { enqueueMusic, toggleMusicLiked, useMusicPlayer } from "@/lib/music/player";
+import { enqueueMusic } from "@/lib/music/player";
+import { useMusicPlayback } from "@/lib/music/use-music-playback";
 import { useRecordingProfile } from "@/lib/music/use-recording-profile";
 import { useT, useUiLanguage } from "@/lib/i18n";
 import { loadArtistProfile } from "@/lib/music/artist-profile";
@@ -75,7 +85,7 @@ export type MusicDetailState = {
 export function MusicDetail({
   detail,
   onBack,
-  onPlay,
+  onPlay: playTrack,
   onOpen,
   onRetry,
   onLoadMore,
@@ -98,13 +108,14 @@ export function MusicDetail({
   onViewChange: (view: MusicDetailViewState) => void;
 }) {
   const t = useT();
-  const player = useMusicPlayer();
+  const player = useMusicPlayback();
   const { profile: playingRecording } = useRecordingProfile(player.current);
   const isCurrent = (track: MusicTrack) =>
     [player.current, player.current?.collectionOrigin, playingRecording?.catalogTrack].some(
       (identity) => identity?.id === track.id && identity.connectorId === track.connectorId,
     );
   const { openPlaylistPicker } = useMusicPlaylistPicker();
+  const { goToAlbum } = useMusicNavigate();
   const heading = useRef<HTMLHeadingElement>(null);
   const view = detail.view ?? DEFAULT_VIEW;
   const { query, sort, section } = view;
@@ -116,7 +127,12 @@ export function MusicDetail({
   }, [detail.item.id]);
   const language = useUiLanguage();
   const [artistImage, setArtistImage] = useState<string | null>(null);
+  const [showAllTracks, setShowAllTracks] = useState(false);
+  useEffect(() => {
+    setShowAllTracks(false);
+  }, [detail.item.id, detail.item.connectorId]);
   const { item, tracks, loading, error } = detail;
+  const artistSaved = useLikedArtist(item.kind === "artist" ? item : null);
   const heroTrack = item.kind === "track" ? item : null;
   const heroMenu = useMusicTrackContextMenu(heroTrack, {
     onPlay: heroTrack ? () => onPlay(heroTrack, [heroTrack]) : undefined,
@@ -130,7 +146,23 @@ export function MusicDetail({
   const title = item.kind === "album" || item.kind === "track" ? item.title : item.name;
   const source = musicSourceLink(item);
   const artwork = Array.isArray(item.artwork) ? item.artwork[0] : item.artwork;
+  // Only a page the listener actually played from earns a place in Jump back in; merely opening
+  // it is browsing, not listening.
+  const onPlay = (track: MusicTrack, queue: MusicTrack[]) => {
+    if (item.kind === "artist" || item.kind === "album" || item.kind === "track") {
+      recordMusicDestination({
+        kind: item.kind,
+        id: item.id,
+        connectorId: item.connectorId ?? undefined,
+        name: item.kind === "artist" ? item.name : item.title,
+        artist: item.kind === "artist" ? undefined : item.artist,
+        artwork: (Array.isArray(item.artwork) ? item.artwork[0] : item.artwork) ?? "",
+      });
+    }
+    playTrack(track, queue);
+  };
   const heroArt = artwork || artistImage;
+  const heroTint = useMusicArtworkColor(heroArt ?? undefined, true);
   useEffect(() => {
     setArtistImage(null);
     if (item.kind !== "artist" || artwork) return;
@@ -142,7 +174,8 @@ export function MusicDetail({
       .catch(() => {});
     return () => controller.abort();
   }, [item.id, item.kind, artwork, language]);
-  const filtered = tracks.filter((track) =>
+  const visible = useBlockedArtistFilter(tracks, "show");
+  const filtered = visible.filter((track) =>
     `${track.title} ${track.artist} ${track.album ?? ""}`
       .toLocaleLowerCase()
       .includes(query.trim().toLocaleLowerCase()),
@@ -157,12 +190,15 @@ export function MusicDetail({
   const showTracks =
     !repeatsHeroTrack && (item.kind !== "artist" || section === "all" || section === "tracks");
   const shownTracks =
-    item.kind === "artist" && section === "all" && !query ? filtered.slice(0, 8) : filtered;
+    item.kind === "artist" && section === "all" && !query && !showAllTracks
+      ? filtered.slice(0, 8)
+      : filtered;
   const shownRows = detail.rows.filter(
     (row) =>
       section === "all" ||
       (section === "albums" && row.items.some((entry) => entry.kind === "album")) ||
-      (section === "artists" && row.items.some((entry) => entry.kind === "artist")),
+      (section === "artists" && row.items.some((entry) => entry.kind === "artist")) ||
+      (section === "tracks" && row.items.some((entry) => entry.kind === "track")),
   );
   const trackControls = (
     <>
@@ -225,7 +261,18 @@ export function MusicDetail({
         <ChevronLeft size={18} />
         {t("music.watch.back")}
       </button>
-      <header className="music-detail-hero">
+      <MusicStickyTitle title={title} tracks={filtered} onPlay={onPlay} />
+      <header
+        className="music-detail-hero"
+        style={
+          heroTint
+            ? ({
+                "--music-hero-tint": heroTint.color,
+                "--music-hero-ink": heroTint.ink,
+              } as CSSProperties)
+            : undefined
+        }
+      >
         {heroMenu.menu}
         <div
           onContextMenu={heroMenu.onContextMenu}
@@ -250,24 +297,29 @@ export function MusicDetail({
           >
             {title}
           </h1>
-          {(item.kind === "album" || item.kind === "track") && (
-            <p className="mt-3 text-ink-muted">
-              <MusicArtistLink
-                name={item.artist}
-                track={item.kind === "track" ? item : undefined}
-              />
-              {item.kind === "album" && item.year ? ` / ${item.year}` : ""}
-            </p>
-          )}
-          {item.kind !== "track" && !loading && !error && (
-            <p className="mt-3 text-sm text-ink-muted">
-              {item.kind === "artist"
-                ? t(
-                    detail.trackScope === "top"
-                      ? "music.artist.popular"
-                      : "music.artist.recordings",
-                  )
-                : t("music.trackCount", { count: tracks.length })}
+          {item.kind !== "artist" && (
+            <p className="music-detail-meta">
+              {(item.kind === "album" || item.kind === "track") && item.explicit === true && (
+                <span
+                  className="music-detail-explicit"
+                  title={t("music.label.explicit")}
+                  aria-label={t("music.label.explicit")}
+                >
+                  E
+                </span>
+              )}
+              {(item.kind === "album" || item.kind === "track") && (
+                <span>
+                  <MusicArtistLink
+                    name={item.artist}
+                    track={item.kind === "track" ? item : undefined}
+                  />
+                </span>
+              )}
+              {item.kind === "album" && item.year ? <span>{item.year}</span> : null}
+              {item.kind !== "track" && !loading && !error ? (
+                <span>{t("music.trackCount", { count: tracks.length })}</span>
+              ) : null}
             </p>
           )}
           {item.kind === "track" && (
@@ -275,7 +327,13 @@ export function MusicDetail({
               {item.album && (
                 <span>
                   <Disc3 size={15} aria-hidden />
-                  {item.album}
+                  <button
+                    type="button"
+                    onClick={() => goToAlbum(item.album ?? "", item.artist)}
+                    className="text-start underline-offset-4 hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-accent"
+                  >
+                    {item.album}
+                  </button>
                 </span>
               )}
               {item.durationLabel && (
@@ -284,6 +342,8 @@ export function MusicDetail({
                   <span dir="ltr">{item.durationLabel}</span>
                 </span>
               )}
+              <MusicQualityBadge track={item} />
+              <MusicBillboardRank title={item.title} artist={item.artist} />
             </div>
           )}
           {item.kind === "artist" && (
@@ -296,51 +356,62 @@ export function MusicDetail({
               <MusicTrackPlaylistChip track={item} />
             </div>
           )}
-          {source && (
-            <button
-              type="button"
-              onClick={() => openUrl(source.url)}
-              className="mt-3 inline-flex min-h-10 items-center gap-2 text-sm text-ink-muted underline-offset-4 hover:text-ink hover:underline"
-            >
-              <MusicServiceLogo source={item.connectorId ?? ""} itemId={item.id} size={20} />
-              {source.name}
-              <ExternalLink size={14} aria-hidden />
-            </button>
+          {tracks.length > 0 && (
+            <div className="music-detail-hero-actions">
+              <MusicCollectionControls
+                tracks={filtered}
+                onPlay={onPlay}
+                disabled={loading}
+                extra={
+                  <>
+                    {item.kind === "track" && (
+                      <>
+                        <HoverTooltip label={t("music.card.addToQueue")} side="top" align="center">
+                          <button type="button" className="music-collection-extra"
+                            aria-label={t("music.card.addToQueue")} onClick={() => enqueueMusic(item)}>
+                            <ListPlus size={26} aria-hidden />
+                          </button>
+                        </HoverTooltip>
+                        <HoverTooltip label={t("music.card.addToPlaylist")} side="top" align="center">
+                          <button type="button" className="music-collection-extra"
+                            aria-label={t("music.card.addToPlaylist")} onClick={() => openPlaylistPicker(item)}>
+                            <Plus size={26} aria-hidden />
+                          </button>
+                        </HoverTooltip>
+                        <HoverTooltip label={t("music.ytm.title")} side="top" align="center">
+                          <button type="button" className="music-collection-extra"
+                            aria-label={t("music.ytm.title")} onClick={() => onWatch(item)}>
+                            <Video size={26} aria-hidden />
+                          </button>
+                        </HoverTooltip>
+                      </>
+                    )}
+                    {item.kind === "artist" && (
+                      <button
+                        type="button"
+                        className="music-collection-extra"
+                        aria-pressed={artistSaved}
+                        aria-label={t(artistSaved ? "music.artist.unsave" : "music.artist.save")}
+                        title={t(artistSaved ? "music.artist.unsave" : "music.artist.save")}
+                        onClick={() => toggleLikedArtist(item)}
+                      >
+                        <Heart size={24} fill={artistSaved ? "currentColor" : "none"} aria-hidden />
+                      </button>
+                    )}
+                    {item.kind === "artist" && (
+                      <MusicArtistMenu
+                        artist={item}
+                        seed={filtered[0]}
+                        onRadio={(track) => requestMusicExplore({ kind: "similar", track })}
+                      />
+                    )}
+                  </>
+                }
+              />
+            </div>
           )}
-          {item.kind === "track" && <MusicQualityBadge track={item} />}
         </div>
       </header>
-      <div className="music-detail-actions">
-        {tracks.length > 0 && (
-          <MusicCollectionControls tracks={filtered} onPlay={onPlay} disabled={loading} />
-        )}
-        {item.kind === "track" && (
-          <>
-            <button
-              type="button"
-              onClick={() => enqueueMusic(item)}
-              className="music-detail-secondary"
-            >
-              <ListPlus size={18} aria-hidden />
-              {t("music.card.addToQueue")}
-            </button>
-            <button
-              type="button"
-              onClick={() => openPlaylistPicker(item)}
-              className="music-detail-secondary"
-            >
-              <Plus size={18} aria-hidden />
-              {t("music.card.addToPlaylist")}
-            </button>
-          </>
-        )}
-        {item.kind === "track" && (
-          <button type="button" onClick={() => onWatch(item)} className="music-home-text">
-            <Video size={18} />
-            {t("music.ytm.title")}
-          </button>
-        )}
-      </div>
       {item.kind === "track" && <MusicSoundtrackLink title={item.title} album={item.album} />}
       <MusicReleaseMetadata item={item} />
       {item.kind !== "artist" && <MusicWhereToBuy item={item} />}
@@ -416,8 +487,6 @@ export function MusicDetail({
               onAddToQueue={() => enqueueMusic(track)}
               onAddToPlaylist={() => openPlaylistPicker(track)}
               onGoToArtist={() => onArtistSearch(track.artist, track)}
-              liked={player.likedIds.includes(track.id)}
-              onToggleFavorite={() => toggleMusicLiked(track)}
             />
           ))}
         </div>
@@ -444,7 +513,10 @@ export function MusicDetail({
           <button
             type="button"
             disabled={detail.loadingMore}
-            onClick={onLoadMore}
+            onClick={() => {
+              setShowAllTracks(true);
+              onLoadMore();
+            }}
             className="inline-flex w-fit items-center gap-2 rounded-md bg-elevated px-5 py-3 text-sm text-ink disabled:opacity-50"
           >
             {detail.loadingMore && (
@@ -476,32 +548,55 @@ export function MusicDetail({
       {shownRows.map((row) => (
         <MusicCatalogRow
           key={row.id}
-          row={row}
+          row={
+            row.id === "artist:playlists" && item.kind === "artist"
+              ? {
+                  ...row,
+                  title: t("music.artist.inPlaylists", { name: item.name }),
+                  titleLiteral: true,
+                }
+              : row
+          }
           min={160}
           onOpen={(item) => onOpen(item, row.items)}
+          onEndReached={
+            row.id === "artist:releases" && detail.releaseCursor && !detail.releasesLoadingMore
+              ? onLoadMoreReleases
+              : undefined
+          }
+          onViewAll={
+            row.id === "artist:rarities"
+              ? () => {
+                  const queue = tracksOf(row.items);
+                  if (!queue.length) return;
+                  requestMusicExplore({
+                    kind: "similar",
+                    track: queue[0],
+                    queue,
+                    label: t("music.artist.rarities"),
+                  });
+                }
+              : undefined
+          }
         />
       ))}
-      {(section === "all" || section === "albums") && (
-        <>
-          {detail.releasesMoreError && (
-            <p role="alert" className="text-sm text-ink-muted">
-              {detail.releasesMoreError}
-            </p>
-          )}
-          {detail.releaseCursor && (
-            <button
-              type="button"
-              disabled={detail.releasesLoadingMore}
-              onClick={onLoadMoreReleases}
-              className="inline-flex w-fit items-center gap-2 rounded-md bg-elevated px-5 py-3 text-sm text-ink disabled:opacity-50"
-            >
-              {detail.releasesLoadingMore && (
-                <LoaderCircle size={17} className="animate-spin motion-reduce:animate-none" />
-              )}
-              {t(detail.releasesMoreError ? "common.retry" : "music.library.loadMore")}
-            </button>
-          )}
-        </>
+      {(section === "all" || section === "albums") && detail.releasesMoreError && (
+        <div className="flex flex-col items-start gap-3">
+          <p role="alert" className="text-sm text-ink-muted">
+            {detail.releasesMoreError}
+          </p>
+          <button
+            type="button"
+            disabled={detail.releasesLoadingMore}
+            onClick={onLoadMoreReleases}
+            className="inline-flex w-fit items-center gap-2 rounded-md bg-elevated px-5 py-3 text-sm text-ink disabled:opacity-50"
+          >
+            {detail.releasesLoadingMore && (
+              <LoaderCircle size={17} className="animate-spin motion-reduce:animate-none" />
+            )}
+            {t("common.retry")}
+          </button>
+        </div>
       )}
       {item.kind === "artist" && (
         <>
@@ -528,6 +623,7 @@ export function MusicDetail({
         <MusicArtistOverview
           artist={item}
           onOpen={(artist) => onOpen({ ...artist, kind: "artist" }, [])}
+          extraLinks={source ? [{ url: source.url, name: source.name, kind: "source" }] : []}
         />
       )}
       {item.kind === "track" && (

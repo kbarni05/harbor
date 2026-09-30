@@ -10,6 +10,14 @@ export type BridgeProvider = {
   hasQuickSearch: boolean;
 };
 
+/** One row a provider offers to browse. `declared` is false for the single row the layer stands up
+ * for a provider that answers the call and names none, which is its only way in. */
+export type BridgeCatalogueRow = {
+  name: string;
+  horizontalImages: boolean;
+  declared: boolean;
+};
+
 export type BridgeSearchItem = {
   name: string;
   url: string;
@@ -23,6 +31,13 @@ export type BridgeEpisode = {
   name: string | null;
   season: number | null;
   episode: number | null;
+  /** The provider's own still for the episode, when it has one. */
+  posterUrl?: string | null;
+  description?: string | null;
+  /** How long the episode runs, in minutes. */
+  runtimeMinutes?: number | null;
+  /** Epoch, in whichever unit the provider used; see the reader in detail.ts. */
+  airDate?: number | null;
   track: string;
 };
 
@@ -30,9 +45,26 @@ export type BridgeMedia = {
   name: string;
   url: string;
   type: string;
+  posterUrl?: string | null;
+  backgroundPosterUrl?: string | null;
   year: number | null;
+  plot?: string | null;
+  tags?: string[];
+  /** How long the item runs, in minutes. */
+  durationMinutes?: number | null;
+  contentRating?: string | null;
+  /** The provider's own score out of ten. It is not an IMDb rating and is never shown as one. */
+  score?: number | null;
+  comingSoon?: boolean;
   playableData: string | null;
   episodes: BridgeEpisode[];
+  /** Other items the provider offers alongside this one, addressed by its own urls. */
+  recommendations?: BridgeSearchItem[];
+  actors?: string[];
+  trailerUrls?: string[];
+  /** The provider's own ids for the title, keyed `imdbId`, `tmdbId`, `kitsuId`, `malId`,
+   * `aniListId` and `simklId`. Declared only by providers that bother, so it is never assumed. */
+  syncIds?: Record<string, string>;
 };
 
 export type BridgeLink = {
@@ -121,8 +153,9 @@ export async function bridgeSearch(
   providerId: string,
   query: string,
   quick: boolean,
+  page = 1,
 ): Promise<BridgeResults<BridgeSearchItem>> {
-  const raw = await invoke("capstan_search", { providerId, query, quick });
+  const raw = await invoke("capstan_search", { providerId, query, quick, page });
   return { items: list<BridgeSearchItem>(raw, "results"), note: note(raw) };
 }
 
@@ -145,4 +178,38 @@ export async function bridgeLoadLinks(providerId: string, data: string): Promise
     subtitles: list<BridgeSubtitle>(raw, "subtitles"),
     note: note(raw),
   };
+}
+
+function catalogueRow(value: unknown): BridgeCatalogueRow | null {
+  if (!value || typeof value !== "object") return null;
+  const o = value as Record<string, unknown>;
+  const name = typeof o.name === "string" ? o.name.trim() : "";
+  if (!name) return null;
+  return { name, horizontalImages: o.horizontalImages === true, declared: o.declared !== false };
+}
+
+export async function bridgeCatalogue(providerId: string): Promise<BridgeCatalogueRow[]> {
+  const raw = await invoke("capstan_catalogue", { providerId });
+  const out: BridgeCatalogueRow[] = [];
+  for (const entry of list<unknown>(raw, "rows")) {
+    const made = catalogueRow(entry);
+    if (made) out.push(made);
+  }
+  return out;
+}
+
+/** A provider may answer one page with several named sections, so a page is flattened back into
+ * the items of the row that was asked for. */
+export async function bridgeCataloguePage(
+  providerId: string,
+  row: string,
+  page: number,
+): Promise<BridgeResults<BridgeSearchItem> & { hasNext: boolean }> {
+  const raw = await invoke("capstan_catalogue_page", { providerId, row, page });
+  const items: BridgeSearchItem[] = [];
+  for (const section of list<unknown>(raw, "sections")) {
+    items.push(...list<BridgeSearchItem>(section, "items"));
+  }
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return { items, note: note(raw), hasNext: o.hasNext === true };
 }

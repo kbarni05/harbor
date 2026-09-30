@@ -7,15 +7,18 @@ import {
   LoaderCircle,
   Radio,
   Server,
-  type LucideIcon,
-} from "lucide-react";
+  type MusicIconComponent,
+} from "@/components/icons/music-icons";
 import { MusicServiceLogo } from "../music-service-logo";
+import { SpotifyPlaybackTarget } from "./spotify-devices";
 import { SpotifySetupFields } from "./spotify-setup";
 import { useT } from "@/lib/i18n";
 import { connectSource, disconnectSource, scanLocalFolder } from "@/lib/music/catalog";
 import {
   isGatedMusicSource,
+  type GatedMusicSource,
   musicSourceAllowed,
+  useMusicSourceConsent,
   requestMusicSourceConsent,
   setMusicSourceEnabled,
 } from "@/lib/music/source-consent";
@@ -37,7 +40,7 @@ export const PRIMARY_BUTTON =
 export const SECONDARY_BUTTON =
   "inline-flex h-11 items-center gap-2 rounded-full border border-edge px-4 text-[12px] font-medium text-ink transition-colors duration-200 ease-out hover:bg-elevated disabled:opacity-40";
 
-const KIND_ICON: Record<MusicConnectionKind, LucideIcon> = {
+const KIND_ICON: Record<MusicConnectionKind, MusicIconComponent> = {
   streaming: AudioLines,
   server: Server,
   local: HardDrive,
@@ -73,6 +76,7 @@ export function MusicConnectionRow({
   onRefresh: () => void;
 }) {
   const t = useT();
+  useMusicSourceConsent();
   const [open, setOpen] = useState(defaultOpen && connection.needs.length > 0);
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<Busy>(null);
@@ -172,7 +176,15 @@ export function MusicConnectionRow({
             <strong className="truncate text-[14px] font-semibold text-ink" title={connection.name}>
               {connection.name}
             </strong>
-            <span className="text-[11px] text-ink-muted">{t(STATUS_LABEL[connection.status])}</span>
+            <span className="text-[11px] text-ink-muted">
+              {t(
+                isGatedMusicSource(connection.id) && !musicSourceAllowed(connection.id)
+                  ? "music.consent.needed"
+                  : connection.anonymous && connection.status === "connected"
+                    ? "music.connections.statusAvailable"
+                    : STATUS_LABEL[connection.status],
+              )}
+            </span>
           </span>
           {(account ?? connection.detail) && (
             <span className="mt-1 block break-words text-[13px] leading-5 text-ink-muted">
@@ -225,6 +237,10 @@ export function MusicConnectionRow({
           onDisconnect={disconnect}
         />
       </div>
+
+      {connection.id === "spotify" && connection.status === "connected" && (
+        <SpotifyPlaybackTarget />
+      )}
 
       {open && connection.needs.length > 0 && (
         <form
@@ -300,7 +316,25 @@ function RowAction({
   onDisconnect: () => void;
 }) {
   const t = useT();
+  useMusicSourceConsent();
   if (connection.status === "unavailable") return <span />;
+  if (isGatedMusicSource(connection.id)) {
+    const allowed = musicSourceAllowed(connection.id);
+    return (
+      <button
+        type="button"
+        onClick={() =>
+          allowed
+            ? setMusicSourceEnabled(connection.id as GatedMusicSource, false)
+            : requestMusicSourceConsent(undefined, connection.id as GatedMusicSource)
+        }
+        className={allowed ? SECONDARY_BUTTON : PRIMARY_BUTTON}
+      >
+        {t(allowed ? "music.consent.turnOff" : "music.consent.review")}
+      </button>
+    );
+  }
+  if (connection.anonymous) return <span />;
   if (connection.status === "connected") {
     return (
       <button

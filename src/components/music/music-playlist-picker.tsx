@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Check, Loader2, Plus } from "lucide-react";
+import { Check, Loader2, Plus } from "@/components/icons/music-icons";
 import { ModalShell, useModalExit } from "@/components/modal-shell";
 import { useT } from "@/lib/i18n";
 import {
@@ -32,15 +32,20 @@ export function useMusicPlaylistPicker(): PickerValue {
  * Saving a track to a playlist from any list in the app. The track rows already carry an
  * "add to playlist" entry; this is what that entry opens.
  */
-export function MusicPlaylistPickerProvider({ children }: { children: ReactNode }) {
+export function MusicPlaylistPickerProvider({ children, active = true }: { children: ReactNode; active?: boolean }) {
   const [track, setTrack] = useState<MusicTrack | null>(null);
-  const openPlaylistPicker = useCallback((next: MusicTrack) => setTrack(next), []);
+  const openPlaylistPicker = useCallback((next: MusicTrack) => {
+    if (active) setTrack(next);
+  }, [active]);
+  useEffect(() => {
+    if (!active) setTrack(null);
+  }, [active]);
   const value = useMemo(() => ({ openPlaylistPicker }), [openPlaylistPicker]);
 
   return (
     <Context.Provider value={value}>
       {children}
-      {track && <PickerModal track={track} onDismiss={() => setTrack(null)} />}
+      {active && track && <PickerModal track={track} onDismiss={() => setTrack(null)} />}
     </Context.Provider>
   );
 }

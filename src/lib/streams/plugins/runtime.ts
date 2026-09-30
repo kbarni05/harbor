@@ -1,6 +1,7 @@
 import { PluginWorker } from "@/lib/manga/plugins/worker-host";
 import { dwarn } from "@/lib/debug";
 import { runExtensionPlugin } from "./extension/run";
+import { acquire, release } from "./gate";
 import { PRELUDE_VERSION } from "./provider-compat/prelude";
 import { settingsFingerprint, workerPluginFor } from "./source";
 import { saveStreamPlugin, streamPluginById } from "./store";
@@ -15,7 +16,6 @@ import type {
 
 const IDLE_MS = 5 * 60_000;
 const MAX_IDLE_WORKERS = 4;
-const GLOBAL_CONCURRENCY = 8;
 const LOG_MAX = 200;
 const AUTO_PAUSE_FAILURES = 3;
 const READY_TIMEOUT = 10_000;
@@ -29,8 +29,6 @@ const health = new Map<string, PluginHealth>();
 const logs = new Map<string, PluginLogLine[]>();
 const listeners = new Set<() => void>();
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
-let inflight = 0;
-const queue: Array<() => void> = [];
 
 function notify(): void {
   for (const l of listeners) l();
@@ -51,7 +49,7 @@ export function pluginLog(id: string): PluginLogLine[] {
   return logs.get(id) ?? [];
 }
 
-function pushLog(id: string, level: string, text: string): void {
+export function pushLog(id: string, level: string, text: string): void {
   const list = logs.get(id) ?? [];
   list.push({ at: Date.now(), level, text: text.slice(0, 600) });
   while (list.length > LOG_MAX) list.shift();
@@ -165,25 +163,6 @@ function startSweep(): void {
   sweepTimer = setInterval(sweep, 60_000);
 }
 
-function acquire(): Promise<void> {
-  if (inflight < GLOBAL_CONCURRENCY) {
-    inflight += 1;
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    queue.push(() => {
-      inflight += 1;
-      resolve();
-    });
-  });
-}
-
-function release(): void {
-  inflight -= 1;
-  const next = queue.shift();
-  if (next) next();
-}
-
 function isAbort(e: unknown): boolean {
   return e instanceof Error && e.name === "AbortError";
 }
@@ -193,20 +172,27 @@ function errorText(e: unknown): string {
   return String(e);
 }
 
+/** Whether a run of failures has stood the plugin down. A function of the count rather than a latch,
+ * so a plugin that answers again comes back rather than staying down for good. */
+function autoPausedAt(failures: number): boolean {
+  return failures >= AUTO_PAUSE_FAILURES;
+}
+
 async function recordFailure(plugin: InstalledStreamPlugin, text: string): Promise<void> {
   const fresh = streamPluginById(plugin.id);
   if (!fresh) return;
   const failures = fresh.failures + 1;
-  const autoPaused = failures >= AUTO_PAUSE_FAILURES;
-  if (autoPaused) disposeStreamPlugin(plugin.id);
-  await saveStreamPlugin({ ...fresh, failures, autoPaused: autoPaused || fresh.autoPaused });
+  if (autoPausedAt(failures)) disposeStreamPlugin(plugin.id);
+  await saveStreamPlugin({ ...fresh, failures, autoPaused: autoPausedAt(failures) });
   pushLog(plugin.id, "error", text);
 }
 
 async function recordSuccess(plugin: InstalledStreamPlugin): Promise<void> {
   const fresh = streamPluginById(plugin.id);
-  if (!fresh || fresh.failures === 0) return;
-  await saveStreamPlugin({ ...fresh, failures: 0 });
+  if (!fresh || (fresh.failures === 0 && !fresh.autoPaused)) return;
+  // An answer lifts the pause as well as clearing the count. Kept, the pause outlived the plugin
+  // being asked again -- and nothing asks a plugin that is paused, so it never came back.
+  await saveStreamPlugin({ ...fresh, failures: 0, autoPaused: false });
 }
 
 function requestCount(plugin: InstalledStreamPlugin): number {

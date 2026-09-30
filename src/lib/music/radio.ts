@@ -139,13 +139,34 @@ async function trackFeatures(deezerId: number): Promise<Features> {
   };
 }
 
+/** loadRecordingProfile answers null once 24 lookups are in flight, taking both Deezer lanes. */
+async function seedArtistId(
+  deezerId: number | undefined,
+  credit: string,
+): Promise<number | undefined> {
+  if (deezerId) {
+    const row = await deezer(`track/${deezerId}`).catch(() => ({}) as Obj);
+    const found = num(obj(row.artist).id);
+    if (found) return found;
+  }
+  const lead = (artistCreditParts(credit)[0] ?? credit).trim();
+  if (!lead) return undefined;
+  const page = await deezer(`search/artist?q=${encodeURIComponent(lead)}&limit=5`).catch(
+    () => ({}) as Obj,
+  );
+  const wanted = normalizeName(lead);
+  return num(rows(page.data).find((entry) => normalizeName(text(entry.name)) === wanted)?.id);
+}
+
 async function resolveSeed(track: MusicTrack): Promise<Seed> {
   const profile = await bounded(loadRecordingProfile(track)).catch(() => null);
   const deezerId = deezerNumeric(profile?.catalogTrack.id ?? track.id, "track");
-  const artistId = deezerNumeric(profile?.primaryArtist.id, "artist");
   const features = deezerId
     ? await trackFeatures(deezerId).catch(() => ({ genres: [] }))
     : { genres: [] };
+  const artistId =
+    deezerNumeric(profile?.primaryArtist.id, "artist") ??
+    (await seedArtistId(deezerId, track.artist).catch(() => undefined));
   return { ...track, deezerId, artistId, features };
 }
 
@@ -425,18 +446,76 @@ async function withSeedArtist(
   return out;
 }
 
+function spreadSeeds(tracks: readonly MusicTrack[], count: number): MusicTrack[] {
+  if (tracks.length <= count) return [...tracks];
+  const step = tracks.length / count;
+  return Array.from({ length: count }, (_, index) => tracks[Math.floor(index * step)]);
+}
+
+const PLAYLIST_SEEDS = 5;
+
+async function topUpFromSeedArtists(
+  seeds: Seed[],
+  mix: MusicTrack[],
+  exclude: Set<string>,
+  size: number,
+): Promise<MusicTrack[]> {
+  const out = [...mix];
+  const seen = new Set([...exclude, ...mix.map(trackKey)]);
+  for (const seed of seeds) {
+    if (out.length >= size) break;
+    if (!seed.artistId) continue;
+    const page = await deezer(`artist/${seed.artistId}/top?limit=25`).catch(() => ({}) as Obj);
+    for (const entry of rows(page.data)) {
+      const candidate = deezerTrack(entry);
+      if (!candidate) continue;
+      const key = trackKey(candidate);
+      if (seen.has(key) || VARIANT.test(candidate.title)) continue;
+      seen.add(key);
+      out.push({ ...candidate, mediaKind: "audio" });
+      if (out.length >= size) break;
+    }
+  }
+  return out;
+}
+
+export async function loadPlaylistLikeThis(
+  tracks: readonly MusicTrack[],
+  size = STATION_SIZE,
+  skip: readonly MusicTrack[] = [],
+): Promise<MusicTrack[]> {
+  const picks = spreadSeeds(tracks, PLAYLIST_SEEDS);
+  if (picks.length === 0) throw new Error("music.radio.error");
+  const resolved = await Promise.all(picks.map((track) => resolveSeed(track).catch(() => null)));
+  const seeds = resolved.filter((seed): seed is Seed => seed != null);
+  if (seeds.length === 0) throw new Error("music.radio.error");
+  const exclude = new Set([...tracks, ...skip].map(trackKey));
+  const mix = await build(seeds, exclude, size);
+  const filled = mix.length >= size ? mix : await topUpFromSeedArtists(seeds, mix, exclude, size);
+  if (filled.length < 5) throw new Error("music.radio.error");
+  return filled;
+}
+
 export async function loadSimilarTracks(track: MusicTrack): Promise<MusicTrack[]> {
   const seed = await resolveSeed(track);
   const following = await build([seed], new Set([trackKey(track)]), STATION_SIZE);
-  if (following.length < 5) throw new Error("music.radio.error");
-  return withSeedArtist(seed, track, following);
+  const filled = await withSeedArtist(seed, track, following);
+  if (filled.length === 0) throw new Error("music.radio.error");
+  return filled;
+}
+
+/** Exclude history before ranking so familiar songs cannot crowd out new recommendations. */
+export async function loadUnheardMusic(track: MusicTrack, excluded: readonly MusicTrack[]): Promise<MusicTrack[]> {
+  const seed = await resolveSeed(track);
+  return build([seed], new Set([track, ...excluded].map(trackKey)), EXTEND_SIZE);
 }
 
 export async function loadTrackRadio(track: MusicTrack): Promise<MusicTrack[]> {
   const seed = await resolveSeed(track);
   const following = await build([seed], new Set([trackKey(track)]), STATION_SIZE);
-  if (following.length < 5) throw new Error("music.radio.error");
-  return [{ ...track, mediaKind: "audio" }, ...following];
+  const filled = await withSeedArtist(seed, track, following);
+  if (filled.length < 5) throw new Error("music.radio.error");
+  return [{ ...track, mediaKind: "audio" }, ...filled];
 }
 
 let armed: { seedKey: string; stop: () => void; extending: boolean } | null = null;

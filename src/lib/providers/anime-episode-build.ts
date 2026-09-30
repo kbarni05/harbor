@@ -6,6 +6,25 @@ import type { Episode as TmdbEpisode } from "@/lib/providers/tmdb/tmdb-details";
 
 export type EpisodeLocalizeOptions = { lang?: string | null };
 
+// Hunter x Hunter (2011) only: AniZip keys 59-78 carry the right Greed Island
+// titles ("Bid x and x Haste" = true ep 59) but Chimera-Ant-era identity
+// (absoluteNumber 117-136, tvdbId 4798644+, image .../4798644.jpg, S2E59-78,
+// airDate 2014). Copying that unchecked poisons TVDB matching, proxy overlay
+// and season buckets (59-78 repeats). Scoped to HxH so no other anime changes.
+function isHunterXHunter2011(aniZip: AniZipMapping | null): boolean {
+  const m = aniZip?.mappings;
+  if (!m) return false;
+  if (m.kitsu_id === 6448) return true;
+  if (m.mal_id === 11061) return true;
+  if (m.anilist_id === 11061) return true;
+  if (m.anidb_id === 8550) return true;
+  if (m.thetvdb_id === 252322) return true;
+  if (m.imdb_id === "tt2098220") return true;
+  const tmdb = m.themoviedb_id;
+  if (tmdb != null && String(tmdb) === "46298") return true;
+  return false;
+}
+
 // Opt-in gate: localized text applies only for non-English languages; English/empty keeps the old merge behavior.
 function wantsLocalized(opts?: EpisodeLocalizeOptions): boolean {
   const lang = opts?.lang?.trim();
@@ -41,7 +60,10 @@ const SCRIPT_TEST: Record<string, RegExp> = {
 const FOREIGN_SCRIPT =
   /[\u0600-\u06FF\u0750-\u077F\u0400-\u04FF\u0370-\u03FF\u0900-\u097F\u0E00-\u0E7F\u0590-\u05FF\uAC00-\uD7AF\u1100-\u11FF\u3400-\u4DBF\u4E00-\u9FFF\u3040-\u30FF]/;
 
-export function isTextInLanguage(text: string | null | undefined, lang: string | null | undefined): boolean {
+export function isTextInLanguage(
+  text: string | null | undefined,
+  lang: string | null | undefined,
+): boolean {
   if (!text) return false;
   const base = lang?.trim().split("-")[0]?.toLowerCase() ?? "";
   if (!base || base === "en") return true;
@@ -50,7 +72,10 @@ export function isTextInLanguage(text: string | null | undefined, lang: string |
   return !FOREIGN_SCRIPT.test(text);
 }
 
-export function isUsableLocalizedText(text: string | null | undefined, lang: string | null | undefined): boolean {
+export function isUsableLocalizedText(
+  text: string | null | undefined,
+  lang: string | null | undefined,
+): boolean {
   if (!text) return false;
   if (isTextInLanguage(text, lang)) return true;
   const base = lang?.trim().split("-")[0]?.toLowerCase() ?? "";
@@ -60,21 +85,40 @@ export function isUsableLocalizedText(text: string | null | undefined, lang: str
 // "Episode N" words in various languages: providers ship such placeholders when a real
 // translated title is missing, and they must not be merged in as if they were titles.
 const EPISODE_NUMBER_WORDS = [
-  "episode", "ep",
-  "الحلقة", "الحلقه", "حلقة", "حلقه",
-  "قسمت", "اپیزود", "اپيسود",
+  "episode",
+  "ep",
+  "الحلقة",
+  "الحلقه",
+  "حلقة",
+  "حلقه",
+  "قسمت",
+  "اپیزود",
+  "اپيسود",
   "قسط",
-  "серия", "эпизод", "серія", "епізод", "епизод", "епизода", "серыя", "эпізод",
+  "серия",
+  "эпизод",
+  "серія",
+  "епізод",
+  "епизод",
+  "епизода",
+  "серыя",
+  "эпізод",
   "επεισόδιο",
-  "एपिसोड", "भाग",
+  "एपिसोड",
+  "भाग",
   "ตอน",
-  "פרק", "פּרק",
+  "פרק",
+  "פּרק",
   "에피소드",
-  "episodio", "capítulo", "capitulo", "cap",
+  "episodio",
+  "capítulo",
+  "capitulo",
+  "cap",
   "épisode",
   "folge",
   "puntata",
-  "bölüm", "bolum",
+  "bölüm",
+  "bolum",
   "odcinek",
   "aflevering",
   "avsnitt",
@@ -132,24 +176,54 @@ export function mergeAniZipEpisodes(
   if (!aniZip?.episodes) return;
   const azImdb = aniZip.mappings?.imdb_id;
   const localized = wantsLocalized(opts);
+  // Guard against corrupt third-party mappings (e.g. Witch Hat Atelier,
+  // kitsu:46043, where AniZip key 2 duplicates key 1's tvdbId/abs and keys
+  // 3..13 shift by -1). Stale tvdbIds outrank correct streaming pairs during
+  // season matching, so the shifted episode steals the slot and the correct
+  // one falls through to Extras. Track ids already owned across the pool so a
+  // duplicate is never applied twice, even if this merge runs more than once.
+  const tvdbOwned = new Map<number, number>();
+  const absOwned = new Map<number, number>();
+  for (const ep of episodes) {
+    if (ep.tvdbEpisodeId != null)
+      tvdbOwned.set(ep.tvdbEpisodeId, (tvdbOwned.get(ep.tvdbEpisodeId) ?? 0) + 1);
+    if (ep.absoluteNumber != null)
+      absOwned.set(ep.absoluteNumber, (absOwned.get(ep.absoluteNumber) ?? 0) + 1);
+  }
+  const hxHGuard = isHunterXHunter2011(aniZip);
   for (const ep of episodes) {
     const az = aniZip.episodes[String(ep.number)];
     if (!az) continue;
     if (localized) {
       const localizedTitle = pickLocalizedTitle(az, opts?.lang);
-      if (localizedTitle && !isGenericEpisodeName(localizedTitle) && isTextInLanguage(localizedTitle, opts?.lang)) {
+      if (
+        localizedTitle &&
+        !isGenericEpisodeName(localizedTitle) &&
+        isTextInLanguage(localizedTitle, opts?.lang)
+      ) {
         ep.title = localizedTitle;
       } else if (az.titles?.en && !isGenericEpisodeName(az.titles.en)) {
         ep.title = az.titles.en;
       }
     } else {
       const enrichedTitle = pickEpisodeTitle(az);
-      if (enrichedTitle && !isGenericEpisodeName(enrichedTitle) && (!ep.title || ep.title === `Episode ${ep.number}`)) {
+      if (
+        enrichedTitle &&
+        !isGenericEpisodeName(enrichedTitle) &&
+        (!ep.title || ep.title === `Episode ${ep.number}`)
+      ) {
         ep.title = enrichedTitle;
       }
     }
     if (az.overview && !ep.synopsis && (!localized || isTextInLanguage(az.overview, opts?.lang))) {
       ep.synopsis = az.overview;
+    }
+    const hxHMismatch =
+      hxHGuard && az.absoluteEpisodeNumber != null && az.absoluteEpisodeNumber !== ep.number;
+    if (hxHMismatch) {
+      if (az.runtime && !ep.length) ep.length = az.runtime;
+      if (az.filler) ep.filler = true;
+      continue;
     }
     if (az.image) {
       if (ep.thumbnail && ep.thumbnail !== az.image && !ep.thumbnailFallback) {
@@ -160,16 +234,57 @@ export function mergeAniZipEpisodes(
     if (az.airDate) ep.airdate = az.airDate;
     if (az.runtime && !ep.length) ep.length = az.runtime;
     if (az.filler) ep.filler = true;
-    if (az.absoluteEpisodeNumber) ep.absoluteNumber = az.absoluteEpisodeNumber;
-    if (az.tvdbId) ep.tvdbEpisodeId = az.tvdbId;
+    // Same-season mismatch means this record's ids belong to another episode
+    // (shifted mapping): applying them would steal a TVDB slot. Multi-cour
+    // entries legitimately differ across seasons, so only same-season
+    // mismatches are skipped. Specials (season 0) never apply to regular eps.
+    const epSeason = ep.imdbSeason ?? ep.seasonNumber ?? 1;
+    const epNum = ep.imdbEpisode ?? ep.number;
+    const azSeason = az.seasonNumber;
+    const shifted =
+      (azSeason === 0 && epSeason >= 1) ||
+      (azSeason != null &&
+        azSeason >= 1 &&
+        azSeason === epSeason &&
+        az.episodeNumber != null &&
+        epNum != null &&
+        az.episodeNumber !== epNum);
+    let applyIds = !shifted;
+    if (
+      applyIds &&
+      az.tvdbId &&
+      (tvdbOwned.get(az.tvdbId) ?? 0) > (ep.tvdbEpisodeId === az.tvdbId ? 1 : 0)
+    ) {
+      applyIds = false;
+    }
+    if (
+      applyIds &&
+      az.absoluteEpisodeNumber &&
+      (absOwned.get(az.absoluteEpisodeNumber) ?? 0) >
+        (ep.absoluteNumber === az.absoluteEpisodeNumber ? 1 : 0)
+    ) {
+      applyIds = false;
+    }
+    if (applyIds) {
+      if (az.absoluteEpisodeNumber) {
+        ep.absoluteNumber = az.absoluteEpisodeNumber;
+        absOwned.set(az.absoluteEpisodeNumber, (absOwned.get(az.absoluteEpisodeNumber) ?? 0) + 1);
+      }
+      if (az.tvdbId) {
+        ep.tvdbEpisodeId = az.tvdbId;
+        tvdbOwned.set(az.tvdbId, (tvdbOwned.get(az.tvdbId) ?? 0) + 1);
+      }
+    }
     if (ep.rating == null && az.rating != null) {
       const r = Number(az.rating);
       if (Number.isFinite(r) && r > 0) ep.rating = r;
     }
     if (az.seasonNumber != null && az.seasonNumber >= 0 && az.episodeNumber != null) {
       if (azImdb) ep.imdbId = azImdb;
-      if (ep.imdbSeason == null) ep.imdbSeason = az.seasonNumber;
-      if (ep.imdbEpisode == null) ep.imdbEpisode = az.episodeNumber;
+      if (!shifted) {
+        if (ep.imdbSeason == null) ep.imdbSeason = az.seasonNumber;
+        if (ep.imdbEpisode == null) ep.imdbEpisode = az.episodeNumber;
+      }
     }
   }
 }
@@ -203,7 +318,11 @@ export function mergeTvdbEpisodes(
     if (!tvdbEp) tvdbEp = tvdbByAbsolute.get(ep.number);
 
     if (tvdbEp) {
-      if (tvdbEp.name && !isGenericEpisodeName(tvdbEp.name) && (localized || !ep.title || ep.title === `Episode ${ep.number}`)) {
+      if (
+        tvdbEp.name &&
+        !isGenericEpisodeName(tvdbEp.name) &&
+        (localized || !ep.title || ep.title === `Episode ${ep.number}`)
+      ) {
         if (!localized || isTextInLanguage(tvdbEp.name, opts?.lang)) {
           ep.title = tvdbEp.name;
         }
@@ -251,7 +370,11 @@ export function mergeTmdbEpisodes(
       (!hasAzMapping ? byPair.get(`${ep.seasonNumber}:${ep.number}`) : undefined) ??
       byNumber.get(ep.number);
     if (!tmdbEp) continue;
-    if (tmdbEp.name && !isGenericEpisodeName(tmdbEp.name) && (localized || !ep.title || ep.title === `Episode ${ep.number}`)) {
+    if (
+      tmdbEp.name &&
+      !isGenericEpisodeName(tmdbEp.name) &&
+      (localized || !ep.title || ep.title === `Episode ${ep.number}`)
+    ) {
       if (!localized || isTextInLanguage(tmdbEp.name, opts?.lang)) {
         ep.title = tmdbEp.name;
       }

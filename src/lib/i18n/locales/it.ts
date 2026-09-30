@@ -1,3 +1,5 @@
+import mediaStart from "./it/media-start";
+import spooktober from "./it/spooktober";
 import listenTogether from "./it/listen-together";
 import music from "./it/music";
 import sportsConsent from "./it/sports-consent";
@@ -24,7 +26,11 @@ import plugins from "./it/plugins";
 import brands from "./it/brands";
 import bpSports from "./it/bp-sports";
 
+import nytTv from "./it/nyt-tv";
+
 const it: Record<string, string> = {
+  ...mediaStart,
+  ...spooktober,
   ...videoCast,
   ...music,
   ...ebookSources,
@@ -51,6 +57,7 @@ const it: Record<string, string> = {
   ...esportsArena,
   ...bpSports,
   ...listenTogether,
+  ...nytTv,
 };
 
 export default it;

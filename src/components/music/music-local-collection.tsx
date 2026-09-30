@@ -1,10 +1,13 @@
 import { MusicCollectionControls } from "./music-collection-controls";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle } from "@/components/icons/music-icons";
 import { MusicArtistCard } from "./music-artist-card";
 import { MusicCoverCard } from "./music-cover-card";
+import { useMusicItemMenu } from "./music-item-menu";
 import { MusicTrackRow } from "./music-track-row";
 import { useMusicPlaylistPicker } from "./music-playlist-picker";
+import { useMusicSourcePicker } from "./music-source-picker";
+import { useMusicCatalogPlayback } from "./use-music-catalog-playback";
 import { enqueueMusic } from "@/lib/music/player";
 import { localCollection } from "@/lib/music/catalog";
 import type { MusicCatalogItem } from "@/lib/music/types";
@@ -24,12 +27,15 @@ export function MusicLocalCollection({
 }) {
   const t = useT();
   const { openPlaylistPicker } = useMusicPlaylistPicker();
+  const { openSourcePicker } = useMusicSourcePicker();
+  const playback = useMusicCatalogPlayback();
   const [items, setItems] = useState<MusicCatalogItem[]>([]);
   const [next, setNext] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
   const generation = useRef(0);
+  const itemMenu = useMusicItemMenu({ onOpen: (item) => onOpen(item, items) });
   const load = useCallback(
     (offset: number) => {
       const request = ++generation.current;
@@ -82,7 +88,7 @@ export function MusicLocalCollection({
         <div className="mb-5">
           <MusicCollectionControls
             tracks={items.filter((item) => item.kind === "track")}
-            onPlay={(track) => onOpen({ ...track, kind: "track" }, items)}
+            onPlay={(track, queue) => openSourcePicker(track, queue)}
           />
         </div>
       )}
@@ -102,14 +108,22 @@ export function MusicLocalCollection({
                 track={item}
                 showDuration
                 index={index + 1}
-                onPlay={() => onOpen(item, items)}
+                onPlay={() => openSourcePicker(item, items.filter((entry) => entry.kind === "track"))}
+                onOpen={() => onOpen(item, items)}
                 onAddToQueue={() => enqueueMusic(item)}
                 onAddToPlaylist={() => openPlaylistPicker(item)}
               />
             ) : item.kind === "artist" ? (
               <MusicArtistCard key={item.id} artist={item} onOpen={() => onOpen(item, items)} />
             ) : (
-              <MusicCoverCard key={item.id} item={item} onOpen={() => onOpen(item, items)} />
+              <MusicCoverCard
+                key={item.id}
+                item={item}
+                onOpen={() => onOpen(item, items)}
+                onPlay={() => { void playback.play(item, items); }}
+                playing={playback.pending === item}
+                onMenu={itemMenu.openFor(item, index)}
+              />
             ),
           )}
         </div>
@@ -133,6 +147,7 @@ export function MusicLocalCollection({
           </button>
         </div>
       )}
+      {playback.error && <p role="alert" className="text-[13px] text-ink-muted">{playback.error}</p>}
       {next !== null && !error && (
         <button
           type="button"
@@ -146,6 +161,7 @@ export function MusicLocalCollection({
           {t("music.library.loadMore")}
         </button>
       )}
+      {itemMenu.menu}
     </section>
   );
 }

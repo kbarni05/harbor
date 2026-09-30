@@ -5,8 +5,9 @@ import { MusicBillboardCharts } from "@/components/music/music-discovery-charts"
 import { MusicAudioSettings } from "@/components/music/music-audio-settings";
 import { MusicSpeakers } from "@/components/music/music-speakers";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, LoaderCircle, Music2, X } from "lucide-react";
+import { ChevronLeft, LoaderCircle, Music2, X } from "@/components/icons/music-icons";
 import { BackToTop } from "@/components/back-to-top";
+import { MusicGlyph } from "@/components/icons/music-glyph";
 import { CatalogCustomizeBar } from "@/components/catalog/customize-bar";
 import { errorText } from "@/components/music/music-connections/connection-row";
 import {
@@ -17,7 +18,6 @@ import {
 import { MusicHomeHero } from "./music/music-home-hero";
 import {
   MusicTastes,
-  MusicTopPlaylists,
   readMusicTastes,
   useMusicTasteRows,
 } from "./music/music-tastes";
@@ -29,14 +29,19 @@ import { MusicPlaylistPickerProvider } from "@/components/music/music-playlist-p
 import { MusicWatch } from "@/components/music/music-watch";
 import { MusicVideoDiscovery } from "@/components/music/music-video-discovery";
 import { MusicSimilarPage } from "./music/music-similar-page";
+import { MusicRollingStoneRow } from "@/components/music/music-rolling-stone-row";
+import { MusicRollingStonePage } from "@/components/music/music-rolling-stone-page";
+import { RS_500_TITLE, RS_SOURCE } from "@/lib/rolling-stone-500";
 import {
   MUSIC_EXPLORE_EVENT,
   MUSIC_GENRE_EVENT,
+  MUSIC_LABEL_EVENT,
   MUSIC_PANEL_EVENT,
   MUSIC_PLAYLIST_EVENT,
   MUSIC_SEARCH_EVENT,
   takeMusicExploreRequest,
   takeMusicGenreRequest,
+  takeMusicLabelRequest,
   takeMusicPanelRequest,
   takeMusicPlaylistRequest,
   takeMusicSearchRequest,
@@ -58,6 +63,8 @@ import {
 import { ScrollRootContext } from "@/components/row";
 import { useT } from "@/lib/i18n";
 import { artistCatalog, localCollection, searchTyped } from "@/lib/music/catalog";
+import { loadMusicGenre } from "@/lib/music/genre-page";
+import { loadMusicLabel } from "@/lib/music/label-page";
 import {
   queryLadder,
   runQueryLadder,
@@ -65,26 +72,33 @@ import {
   type QueryRung,
 } from "@/lib/music/search-fallback";
 import {
+  musicSimilarTracks,
   playMusicOnSpeaker,
   returnMusicToComputer,
   stopMusicCasting,
-  useMusicPlayer,
 } from "@/lib/music/player";
+import { useMusicPlayback } from "@/lib/music/use-music-playback";
 import type { MusicCatalogItem, MusicSearchResults, MusicTrack } from "@/lib/music/types";
 import { hasPageRowChanges, resetPageRows, usePageRows } from "@/lib/page-rows";
 import { useScrollMemory } from "@/lib/view";
 import { resetMusicScroll, useMusicScrollContinuity } from "@/lib/music/scroll-continuity";
-import { pushBackHandler } from "@/lib/back-intercept";
+import { useSectionBack } from "@/lib/section-back";
 import { MusicBandStack } from "./music/music-band-stack";
 import { gateBand, scrobbleShelf } from "./music/music-band-gates";
 import { tracksOf, type MusicBand, type MusicBandContext } from "./music/music-band-types";
 import { catalogBands } from "./music/music-catalog-bands";
 import { splitHomeRows } from "./music/music-home-rows";
+import { madeForYouBand } from "./music/music-made-for-you-band";
+import { jumpBackInBand } from "./music/music-jump-back-in";
+import { newReleaseCtaBand } from "./music/music-new-release-ctas";
 import { personalBands } from "./music/music-personal-bands";
+import { spotifyBands } from "./music/music-spotify-band";
+import { MusicTopPlaylists } from "./music/music-top-playlists";
 import { MusicSearchPanel } from "./music/music-search-panel";
 import { useMusicData } from "./music/use-music-data";
 
 import { MusicDetail, type MusicDetailState } from "./music/music-detail";
+import { registerMusicCatalogOrigin } from "@/lib/music/playback-origin";
 import { loadDetailRows, loadDetailTracks } from "./music/music-detail-data";
 
 type SearchState = {
@@ -92,40 +106,29 @@ type SearchState = {
   connector: string | null;
   results: MusicSearchResults | null;
   error: string;
-  mode?: "search" | "genre";
+  mode?: "search" | "genre" | "label";
+  labelId?: string;
   /** Retries the work that produced this state, so a climbed search does not retry as a flat one. */
   retry?: () => void;
 };
 
 type Notice = { kind: "busy" | "info" | "error"; text: string };
 
-export function MusicView({
-  active,
-  shellBackAvailable = false,
-}: {
-  active: boolean;
-  shellBackAvailable?: boolean;
-}) {
+export function MusicView({ active }: { active: boolean; shellBackAvailable?: boolean }) {
   return (
-    <MusicConnectionsProvider>
-      <MusicSourcePickerProvider>
-        <MusicPlaylistPickerProvider>
-          <MusicViewContent active={active} shellBackAvailable={shellBackAvailable} />
+    <MusicConnectionsProvider active={active}>
+      <MusicSourcePickerProvider active={active}>
+        <MusicPlaylistPickerProvider active={active}>
+          <MusicViewContent active={active} />
         </MusicPlaylistPickerProvider>
       </MusicSourcePickerProvider>
     </MusicConnectionsProvider>
   );
 }
 
-function MusicViewContent({
-  active,
-  shellBackAvailable,
-}: {
-  active: boolean;
-  shellBackAvailable: boolean;
-}) {
+function MusicViewContent({ active }: { active: boolean }) {
   const t = useT();
-  const player = useMusicPlayer();
+  const player = useMusicPlayback();
   const { openSourcePicker } = useMusicSourcePicker();
   const {
     openConnections,
@@ -160,12 +163,14 @@ function MusicViewContent({
 
   const [genre, setGenre] = useState<MusicGenreEntry | null>(null);
   const [discoveryPage, setDiscoveryPage] = useState<
-    "tastes" | "playlists" | "videos" | "billboard" | null
+    "tastes" | "playlists" | "videos" | "billboard" | "rollingStone" | null
   >(null);
   const [billboardChart, setBillboardChart] = useState("hot-100");
   const [videoQuery, setVideoQuery] = useState("music videos");
   const discoveryOrigin = useRef<{ text: string | null } | null>(null);
-  const openDiscovery = (page: "tastes" | "playlists" | "videos" | "billboard") => {
+  const openDiscovery = (
+    page: "tastes" | "playlists" | "videos" | "billboard" | "rollingStone",
+  ) => {
     discoveryOrigin.current = { text: document.activeElement?.textContent ?? null };
     setDiscoveryPage(page);
   };
@@ -216,7 +221,14 @@ function MusicViewContent({
   const [searching, setSearching] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [watch, setWatch] = useState<{ track: MusicTrack; queue: MusicTrack[] } | null>(null);
-  const [similar, setSimilar] = useState<{ seed: MusicTrack; tracks: MusicTrack[] } | null>(null);
+  const [similar, setSimilar] = useState<{
+    seed: MusicTrack;
+    tracks: MusicTrack[];
+    state: "loading" | "ready" | "error";
+    label?: string;
+    contextId?: string;
+  } | null>(null);
+  const similarRun = useRef(0);
   const watchFromVideos = useRef(false);
   const openVideo = (track: MusicTrack, queue: MusicTrack[]) => {
     watchFromVideos.current = discoveryPage === "videos";
@@ -318,6 +330,35 @@ function MusicViewContent({
       });
   }, []);
 
+  const openLabel = useCallback((id: string, name: string) => {
+    const generation = ++searchGeneration.current;
+    if (detailRef.current) searchOrigin.current = detailRef.current;
+    setDetail(null);
+    if (!searchOrigin.current) detailTrail.current = [];
+    resolveGeneration.current += 1;
+    setSimilar(null);
+    setSearch({ labelId: id, query: name, connector: null, results: null, error: "", mode: "label" });
+    setSearching(true);
+    loadMusicLabel(id)
+      .then((results) => {
+        if (searchGeneration.current !== generation) return;
+        setSearch({ labelId: id, query: name, connector: null, results, error: "", mode: "label" });
+      })
+      .catch((cause) => {
+        if (searchGeneration.current !== generation) return;
+        setSearch({
+          query: name,
+          connector: null,
+          results: null,
+          error: errorText(cause),
+          mode: "label",
+        });
+      })
+      .finally(() => {
+        if (searchGeneration.current === generation) setSearching(false);
+      });
+  }, []);
+
   const openGenre = useCallback((name: string) => {
     const generation = ++searchGeneration.current;
     if (detailRef.current) searchOrigin.current = detailRef.current;
@@ -327,7 +368,7 @@ function MusicViewContent({
     setSimilar(null);
     setSearch({ query: name, connector: null, results: null, error: "", mode: "genre" });
     setSearching(true);
-    searchTyped(name, 36, undefined)
+    loadMusicGenre(name)
       .then((results) => {
         if (searchGeneration.current !== generation) return;
         setSearch({ query: name, connector: null, results, error: "", mode: "genre" });
@@ -416,32 +457,13 @@ function MusicViewContent({
       tab === "explore" &&
       genre !== null &&
       !connectionsPage &&
+      !discoveryPage &&
       !search &&
       !detail &&
       !similar &&
       !watch &&
       !ytm,
   );
-  const mastBack = connectionsPage
-    ? closeConnections
-    : discoveryPage === "videos"
-      ? closeDiscovery
-      : ytm
-        ? closeYtm
-        : watch
-          ? closeWatch
-          : similar
-            ? closeSimilar
-            : detail
-              ? closeDetail
-              : search
-                ? clearSearch
-                : discoveryPage
-                  ? closeDiscovery
-                  : tab === "explore" && genre !== null
-                    ? () => setGenre(null)
-                    : undefined;
-
   const layerKey = connectionsPage
     ? `connections:${connectionsPage.focusId ?? "all"}`
     : discoveryPage === "videos"
@@ -617,14 +639,21 @@ function MusicViewContent({
     }
   }, []);
 
-  const [libraryTarget, setLibraryTarget] = useState<{ view?: string; playlistId?: string } | null>(
+  const [libraryTarget, setLibraryTarget] = useState<{ view?: string; playlistId?: string; spotifyKind?: "playlists" | "liked" } | null>(
     null,
   );
   // Clicking a playlist has to land on that playlist, not on whatever tab the library
   // happened to open on last time.
-  const openLibrary = useCallback((target?: { view?: string; playlistId?: string }) => {
+  const openLibrary = useCallback((target?: { view?: string; playlistId?: string; spotifyKind?: "playlists" | "liked" }) => {
     setLibraryTarget(target ?? null);
     setTab("library");
+    setDetail(null);
+    setSearch(null);
+    setSimilar(null);
+    setWatch(null);
+    setYtm(false);
+    setDiscoveryPage(null);
+    searchOrigin.current = null;
     scrollRef.current?.scrollTo({ top: 0 });
   }, []);
 
@@ -806,10 +835,31 @@ function MusicViewContent({
         setWatch(null);
         setYtm(false);
         setDiscoveryPage(null);
-        setSimilar({
-          seed: request.track,
-          tracks: request.queue?.length ? request.queue : [request.track],
-        });
+        const run = ++similarRun.current;
+        if (request.queue?.length) {
+          setSimilar({
+            seed: request.track,
+            tracks: request.queue,
+            state: "ready",
+            label: request.label,
+            contextId: request.contextId,
+          });
+          return;
+        }
+        setSimilar({ seed: request.track, tracks: [], state: "loading" });
+        void musicSimilarTracks(request.track)
+          .then((mix) => {
+            if (run !== similarRun.current) return;
+            setSimilar({
+              seed: request.track,
+              tracks: mix.length ? mix : [request.track],
+              state: mix.length ? "ready" : "error",
+            });
+          })
+          .catch(() => {
+            if (run !== similarRun.current) return;
+            setSimilar({ seed: request.track, tracks: [], state: "error" });
+          });
         return;
       }
       if (request.kind === "watch") {
@@ -877,6 +927,16 @@ function MusicViewContent({
     return () => window.removeEventListener(MUSIC_GENRE_EVENT, receive);
   }, [openGenre]);
 
+  useEffect(() => {
+    const receive = () => {
+      const label = takeMusicLabelRequest();
+      if (label) openLabel(label.id, label.name);
+    };
+    window.addEventListener(MUSIC_LABEL_EVENT, receive);
+    receive();
+    return () => window.removeEventListener(MUSIC_LABEL_EVENT, receive);
+  }, [openLabel]);
+
   const slots = useMemo(
     () => splitHomeRows(data.homeRows, connections),
     [data.homeRows, connections],
@@ -901,8 +961,11 @@ function MusicViewContent({
   };
 
   const personal = personalBands(context);
+  const spotifyRows = spotifyBands(context);
   const catalog = catalogBands(context);
   const bands: MusicBand[] = [];
+  const jumpBackIn = jumpBackInBand(context);
+  if (jumpBackIn) bands.push(jumpBackIn);
   if (tasteRows.loading && !tasteRows.rows.length)
     bands.push({
       key: "music:taste-loading",
@@ -934,6 +997,10 @@ function MusicViewContent({
       catalog: true,
       render: () => <MusicSectionError onRetry={tasteRows.retry} />,
     });
+  bands.push(...spotifyRows);
+  if (data.library?.playlists.length) bands.push(personal.playlists);
+  const madeForYou = madeForYouBand(context);
+  if (madeForYou) bands.push(madeForYou);
   if (personal.recents) bands.push(personal.recents);
   if (personal.recentContexts) bands.push(personal.recentContexts);
   if (slots.server.length) bands.push(...catalog.server);
@@ -950,6 +1017,8 @@ function MusicViewContent({
       <MusicBillboardCharts title={title} onOpen={openItem} onBrowse={openBillboard} />
     ),
   });
+  const newReleaseCtas = newReleaseCtaBand(context);
+  if (newReleaseCtas) bands.push(newReleaseCtas);
   bands.push({
     key: "music:videos",
     title: t("music.now.videos"),
@@ -966,8 +1035,19 @@ function MusicViewContent({
   });
   if (player.likedTracks.length || player.queue.length) bands.push(personal.queue);
   if (data.homeStatus !== "ready" || slots.stations.length) bands.push(...catalog.stations);
+  bands.push({
+    key: "rolling-stone",
+    title: `${RS_SOURCE} · ${t(RS_500_TITLE)}`,
+    catalog: true,
+    render: (title) => (
+      <MusicRollingStoneRow
+        title={title}
+        onOpen={(item, siblings) => openItem(item, siblings)}
+        onViewAll={() => openDiscovery("rollingStone")}
+      />
+    ),
+  });
   bands.push(...catalog.extras);
-  if (data.library?.playlists.length) bands.push(personal.playlists);
   const scrobble = scrobbleShelf(context, catalog.scrobble);
   if (scrobble && data.lastfm?.connected) bands.push(scrobble);
 
@@ -997,7 +1077,6 @@ function MusicViewContent({
           >
             <section data-scroll-anchor="mast">
               <MusicMast
-                onBack={shellBackAvailable ? undefined : mastBack}
                 initialQuery={search && search.mode !== "genre" ? search.query : ""}
                 onSubmit={runSearch}
                 onClear={clearSearch}
@@ -1014,7 +1093,6 @@ function MusicViewContent({
               ) : connectionsPage.focusId === "__speakers" ? (
                 <MusicSpeakers
                   track={player.current}
-                  positionSec={player.currentTime}
                   onLoad={playMusicOnSpeaker}
                   onStop={stopMusicCasting}
                   onReturn={returnMusicToComputer}
@@ -1061,7 +1139,14 @@ function MusicViewContent({
                 onClose={closeWatch}
               />
             ) : similar ? (
-              <MusicSimilarPage seed={similar.seed} tracks={similar.tracks} onBack={closeSimilar} />
+              <MusicSimilarPage
+                seed={similar.seed}
+                tracks={similar.tracks}
+                state={similar.state}
+                label={similar.label}
+                contextId={similar.contextId}
+                onBack={closeSimilar}
+              />
             ) : detail ? (
               <MusicDetail
                 onVideo={openVideo}
@@ -1077,13 +1162,17 @@ function MusicViewContent({
                 onLoadMoreReleases={loadMoreArtistReleases}
                 detail={detail}
                 onBack={closeDetail}
-                onPlay={playTrack}
+                onPlay={(track, queue) => {
+                  registerMusicCatalogOrigin(detail.item, queue);
+                  playTrack(track, queue);
+                }}
                 onOpen={openItem}
                 onRetry={() => openItem(detail.item, [], false)}
               />
             ) : search ? (
               <MusicSearchPanel
-                variant={search.mode === "genre" ? "genre" : "search"}
+                variant={search.mode ?? "search"}
+                labelId={search.labelId}
                 query={search.query}
                 results={search.results}
                 error={search.error}
@@ -1104,6 +1193,8 @@ function MusicViewContent({
               />
             ) : discoveryPage === "playlists" ? (
               <MusicTopPlaylists onBack={closeDiscovery} onOpen={openItem} />
+            ) : discoveryPage === "rollingStone" ? (
+              <MusicRollingStonePage onBack={closeDiscovery} onOpen={openItem} />
             ) : discoveryPage === "billboard" ? (
               <MusicBillboardPage
                 onBack={closeDiscovery}
@@ -1167,8 +1258,10 @@ function MusicViewContent({
                         onGenre={setGenre}
                         onOpen={openItem}
                         onBillboard={openBillboard}
+                        onTastes={() => openDiscovery("tastes")}
+                        onWatch={openVideo}
+                        active={active}
                       />
-                      <MusicVideoDiscovery active={active} onWatch={openVideo} />
                     </>
                   )}
                   {tab === "library" ? (
@@ -1188,6 +1281,7 @@ function MusicViewContent({
                       onOpen={openItem}
                       initialView={libraryTarget?.view}
                       initialPlaylistId={libraryTarget?.playlistId}
+                      initialSpotifyKind={libraryTarget?.spotifyKind}
                     />
                   ) : tab === "explore" ? null : stalled ? (
                     <MusicStalled message={data.homeError} onRetry={retry} />
@@ -1203,7 +1297,10 @@ function MusicViewContent({
               </div>
             )}
           </div>
-          <BackToTop scrollRef={scrollRef} />
+          <BackToTop
+            scrollRef={scrollRef}
+            icon={<MusicGlyph name="expand" size={14} />}
+          />
         </ScrollRootContext.Provider>
       </main>
     </MusicNavigateProvider>
@@ -1261,12 +1358,9 @@ function MusicStalled({ message, onRetry }: { message: string; onRetry: () => vo
 }
 
 function useMusicPageEscape(onBack: () => void, active: boolean) {
+  useSectionBack(onBack, active);
   useEffect(() => {
     if (!active) return;
-    const removeBack = pushBackHandler(() => {
-      onBack();
-      return true;
-    });
     const handle = (event: KeyboardEvent) => {
       if (
         event.key !== "Escape" ||
@@ -1282,9 +1376,6 @@ function useMusicPageEscape(onBack: () => void, active: boolean) {
       onBack();
     };
     window.addEventListener("keydown", handle, true);
-    return () => {
-      window.removeEventListener("keydown", handle, true);
-      removeBack();
-    };
+    return () => window.removeEventListener("keydown", handle, true);
   }, [onBack, active]);
 }

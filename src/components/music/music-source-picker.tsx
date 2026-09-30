@@ -9,13 +9,17 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Check, ExternalLink, LoaderCircle, Music2, Unplug, X } from "lucide-react";
+import { Check, ExternalLink, LoaderCircle, Music2, Unplug, X } from "@/components/icons/music-icons";
 import { ModalShell, useModalExit } from "@/components/modal-shell";
 import { MusicSourceRow } from "@/components/music/music-source-row";
 import { useT } from "@/lib/i18n";
-import { clearMusicError, getMusicState, playMusic } from "@/lib/music/player";
-import { getMusicSourceCandidates, getSpotifyStatus } from "@/lib/music/sources";
-import { useMusicConnections } from "./music-connections";
+import { adoptRequestedIdentity } from "@/lib/music/queue-source";
+import { playMusic } from "@/lib/music/player";
+import {
+  getMusicSourceCandidates,
+  getSpotifyStatus,
+  musicSourcePriority,
+} from "@/lib/music/sources";
 import { musicProviderSearch, musicRecoveryKey, musicSourceName } from "@/lib/music/recovery";
 import { openUrl } from "@/lib/window";
 import type { MusicSourceCandidate, MusicTrack, SpotifyStatus } from "@/lib/music/types";
@@ -27,15 +31,6 @@ import { MusicSourcePopover } from "./music-source-popover";
 import { MusicSourcePossible } from "./music-source-possible";
 
 const SOURCE_KEY = "harbor.music.preferred-source.v1";
-function fromCollection(selected: MusicTrack, original: MusicTrack): MusicTrack {
-  return {
-    ...selected,
-    collectionOrigin: original.collectionOrigin ?? {
-      id: original.id,
-      connectorId: original.connectorId,
-    },
-  };
-}
 type PlaybackReady = (track: MusicTrack, queue: MusicTrack[]) => void;
 
 type PickerRequest = {
@@ -47,30 +42,24 @@ type PickerRequest = {
   failedTrack?: MusicTrack;
 };
 
-let recoveryRequest: PickerRequest | null = null;
-const RECOVER_EVENT = "harbor:music-choose-source";
-export function chooseAnotherMusicSource(track: MusicTrack, queue: MusicTrack[]) {
-  recoveryRequest = {
-    track,
-    queue,
-    forceChoice: true,
-    failure: getMusicState().error ?? undefined,
-    failedTrack: track,
-  };
-  clearMusicError();
-  window.dispatchEvent(new Event(RECOVER_EVENT));
-}
-
 type MusicSourcePickerContextValue = {
   openSourcePicker: (track: MusicTrack, queue?: MusicTrack[], onReady?: PlaybackReady) => void;
 };
 
 const MusicSourcePickerContext = createContext<MusicSourcePickerContextValue | null>(null);
 
-export function MusicSourcePickerProvider({ children }: { children: ReactNode }) {
+export function MusicSourcePickerProvider({ children, active = true }: { children: ReactNode; active?: boolean }) {
+  // Nesting a second provider renders a second dialog over the first. A view that sits inside one
+  // already has a working picker, so the inner provider passes straight through.
+  const outer = useContext(MusicSourcePickerContext);
+  if (outer) return <>{children}</>;
+  return (
+    <MusicSourcePickerRoot active={active}>{children}</MusicSourcePickerRoot>
+  );
+}
+
+function MusicSourcePickerRoot({ children, active }: { children: ReactNode; active: boolean }) {
   const t = useT();
-  const { openConnections } = useMusicConnections();
-  const [request, setRequest] = useState<PickerRequest | null>(null);
   const [resolving, setResolving] = useState<MusicTrack | null>(null);
   const generation = useRef(0);
   useEffect(
@@ -81,15 +70,17 @@ export function MusicSourcePickerProvider({ children }: { children: ReactNode })
   );
   const dismiss = useCallback(() => {
     generation.current += 1;
-    setRequest(null);
     setResolving(null);
   }, []);
+  useEffect(() => {
+    if (!active) dismiss();
+  }, [active, dismiss]);
   const openSourcePicker = useCallback(
     (track: MusicTrack, queue = [track], onReady?: PlaybackReady, forceChoice = false) => {
+      if (!active) return;
       const current = ++generation.current;
       if (track.mediaKind === "video" && !onReady && !forceChoice) {
-        setRequest(null);
-        setResolving(null);
+            setResolving(null);
         requestMusicExplore({
           kind: "watch",
           track,
@@ -102,43 +93,39 @@ export function MusicSourcePickerProvider({ children }: { children: ReactNode })
       };
       const preferred = readMusicPreference(SOURCE_KEY);
       if (track.playbackUrl && !forceChoice) {
-        setRequest(null);
-        void playMusic(track, queue)
+            void playMusic(track, queue)
           .then(() => ready(track, queue))
           .catch(() => {});
         return;
       }
-      if (preferred && !forceChoice) {
-        setRequest(null);
-        setResolving(track);
+      if (!forceChoice) {
+            setResolving(track);
         void getMusicSourceCandidates(track)
           .then(async (candidates) => {
             if (generation.current !== current) return;
-            const match = candidates.find(
-              (candidate) => candidate.connectorId === preferred && candidate.health !== "offline",
-            );
+            const usable = candidates.filter((candidate) => candidate.health !== "offline");
+            const match =
+              usable.find((candidate) => candidate.connectorId === preferred) ??
+              [...usable].sort(
+                (left, right) =>
+                  musicSourcePriority(left.connectorId) - musicSourcePriority(right.connectorId),
+              )[0];
             if (!match) {
-              setRequest({ track, queue, onReady: ready });
+              setResolving(null);
+              window.dispatchEvent(new Event("harbor:music-playback-source-required"));
               return;
             }
-            const selected = fromCollection(match.track, track);
+            const selected = adoptRequestedIdentity(match.track, track);
             const selectedQueue = queue.map((item) =>
               item.id === track.id && item.connectorId === track.connectorId ? selected : item,
             );
             await playMusic(selected, selectedQueue);
             ready(selected, selectedQueue);
           })
-          .catch((reason) => {
+          .catch(() => {
             if (generation.current === current) {
-              setRequest({
-                track,
-                queue,
-                onReady: ready,
-                forceChoice: true,
-                failure: String(reason),
-                failedTrack: getMusicState().current ?? track,
-              });
-              clearMusicError();
+              setResolving(null);
+              window.dispatchEvent(new Event("harbor:music-playback-source-required"));
             }
           })
           .finally(() => {
@@ -147,29 +134,17 @@ export function MusicSourcePickerProvider({ children }: { children: ReactNode })
         return;
       }
       setResolving(null);
-      setRequest({ track, queue, onReady: ready, forceChoice });
-    },
-    [],
-  );
-  useEffect(() => {
-    const recover = () => {
-      if (!recoveryRequest) return;
-      const next = recoveryRequest;
-      recoveryRequest = null;
-      generation.current += 1;
       setResolving(null);
-      setRequest(next);
-    };
-    recover();
-    window.addEventListener(RECOVER_EVENT, recover);
-    return () => window.removeEventListener(RECOVER_EVENT, recover);
-  }, [openSourcePicker]);
+      window.dispatchEvent(new Event("harbor:music-playback-source-required"));
+    },
+    [active],
+  );
   const value = useMemo(() => ({ openSourcePicker }), [openSourcePicker]);
 
   return (
     <MusicSourcePickerContext.Provider value={value}>
       {children}
-      {resolving && (
+      {active && resolving && (
         <div
           role="status"
           style={{
@@ -187,15 +162,6 @@ export function MusicSourcePickerProvider({ children }: { children: ReactNode })
             <X size={18} />
           </button>
         </div>
-      )}
-      {request && (
-        <MusicSourcePicker
-          key={request.track.id}
-          request={request}
-          onClose={dismiss}
-          onStarting={() => setRequest(null)}
-          onConnect={() => openConnections("spotify")}
-        />
       )}
     </MusicSourcePickerContext.Provider>
   );
@@ -328,14 +294,14 @@ export function MusicSourcePicker({
       setPending(connectorId);
       writeMusicPreference(SOURCE_KEY, connectorId);
     }
-    const selected = fromCollection(chosen, request.track);
+    const selected = adoptRequestedIdentity(chosen, request.track);
     const queue = request.queue.map((track) =>
       track.id === request.track.id && track.connectorId === request.track.connectorId
         ? selected
         : track,
     );
     onStarting();
-    void playMusic(selected, queue)
+    void playMusic(selected, queue, undefined, false, false, true)
       .then(() => {
         request.onReady?.(selected, queue);
       })
@@ -408,7 +374,7 @@ export function MusicSourcePicker({
             )}
           </section>
         )}
-        {!spotify?.connected && (
+        {!loading && !spotify?.connected && (
           <button
             type="button"
             onClick={connect}
@@ -429,7 +395,7 @@ export function MusicSourcePicker({
           </button>
         )}
 
-        {spotify?.connected && (
+        {!loading && spotify?.connected && (
           <div className="mx-2 flex items-center justify-between border-b border-edge-soft py-3 font-mono text-[9px] uppercase tracking-[0.12em] text-ink-subtle">
             <span className="inline-flex items-center gap-2">
               <Check size={12} />{" "}
@@ -442,7 +408,16 @@ export function MusicSourcePicker({
         {loading ? (
           <div className="grid gap-px py-2" aria-label={t("music.source.loading")}>
             {[0, 1, 2].map((item) => (
-              <div key={item} className="h-16 animate-pulse rounded-md bg-elevated/45" />
+              <div
+                key={item}
+                className="grid h-16 grid-cols-[44px_minmax(0,1fr)] items-center gap-3 px-4"
+              >
+                <span className="harbor-shimmer size-10 rounded-md" />
+                <span className="grid gap-1.5">
+                  <span className="harbor-shimmer block h-3 w-1/3 rounded" />
+                  <span className="harbor-shimmer block h-2.5 w-3/5 rounded" />
+                </span>
+              </div>
             ))}
           </div>
         ) : (

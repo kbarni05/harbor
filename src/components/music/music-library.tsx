@@ -1,16 +1,24 @@
-import { MusicBackButton } from "./music-back-button";
-import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useMusicSourcePicker } from "./music-source-picker";
+import { recordMusicPlaylistPlayback } from "@/lib/music/playback-origin";
+import { recordMusicDestination } from "@/lib/music/recent-destinations";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { FileDown, FileUp, FolderOpen, LoaderCircle, Plus, Search, X } from "lucide-react";
+import { FileUp, FolderOpen, LoaderCircle, Plus, Search, X } from "@/components/icons/music-icons";
 import { Dropdown } from "@/components/dropdown";
-import { pushBackHandler } from "@/lib/back-intercept";
-import { MusicDownloads } from "./music-downloads";
+import { useSectionBack } from "@/lib/section-back";
 import { MusicLocalCollection } from "./music-local-collection";
 import { MusicSpotifyLibrary } from "./music-spotify-library";
 import { useMusicConnections } from "./music-connections";
 import { MusicLastFm } from "@/components/music/music-lastfm";
 import { MusicCoverCard } from "./music-cover-card";
+import { useMusicItemMenu } from "./music-item-menu";
+import { MusicPlaylistGridSkeleton } from "@/components/music/music-skeletons";
+import { ChevronDown } from "@/components/icons/music-icons";
 import { MusicPlaylistCover } from "./music-playlist-cover";
+import {
+  MusicPlaylistCoverEdit,
+  useMusicPlaylistCover,
+} from "./music-playlist-cover-edit";
 import { MusicServiceLogo } from "./music-service-logo";
 import { LibraryTrackList, PlaylistHeader } from "@/components/music/music-library-parts";
 import { useT } from "@/lib/i18n";
@@ -24,12 +32,11 @@ import {
   removeTrackFromMusicPlaylist,
   reorderMusicPlaylist,
 } from "@/lib/music/library";
-import { useMusicPlayer } from "@/lib/music/player";
+import { useMusicPlayback } from "@/lib/music/use-music-playback";
 import type { MusicCatalogItem, MusicPlaylist, MusicTrack } from "@/lib/music/types";
 import "./music-library.css";
 
 type LibraryView =
-  | "downloads"
   | "albums"
   | "artists"
   | "tracks"
@@ -38,7 +45,6 @@ type LibraryView =
   | "recent"
   | "spotify";
 const VIEWS: LibraryView[] = [
-  "downloads",
   "albums",
   "artists",
   "tracks",
@@ -50,20 +56,42 @@ const VIEWS: LibraryView[] = [
 
 const EMPTY_LIBRARY = { playlists: [] as MusicPlaylist[] };
 
+function PlaylistArt({ playlist }: { playlist: MusicPlaylist }) {
+  const custom = useMusicPlaylistCover(playlist.id);
+  return (
+    <MusicPlaylistCoverEdit playlistId={playlist.id} hasCustom={Boolean(custom)}>
+      {custom ? (
+        <span className="music-playlist-custom-cover">
+          <img src={custom} alt="" draggable={false} />
+        </span>
+      ) : (
+        <MusicPlaylistCover
+          artwork={playlist.tracks.map((track) => track.artwork)}
+          seed={playlist.id}
+          glyphSize={48}
+        />
+      )}
+    </MusicPlaylistCoverEdit>
+  );
+}
+
 export function MusicLibrary({
   onOpen,
   active = true,
   initialView,
   initialPlaylistId,
+  initialSpotifyKind,
 }: {
   onOpen: (item: MusicCatalogItem, siblings: MusicCatalogItem[]) => void;
   active?: boolean;
   initialView?: string;
   initialPlaylistId?: string;
+  initialSpotifyKind?: "playlists" | "liked";
 }) {
   const t = useT();
   const { openConnections } = useMusicConnections();
-  const player = useMusicPlayer();
+  const { openSourcePicker } = useMusicSourcePicker();
+  const player = useMusicPlayback();
   const [library, setLibrary] = useState(EMPTY_LIBRARY);
   const [selectedId, setSelectedId] = useState<string | null>(initialPlaylistId ?? null);
   const [playlistName, setPlaylistName] = useState("");
@@ -76,6 +104,15 @@ export function MusicLibrary({
   const [view, setView] = useState<LibraryView>(() =>
     (VIEWS as string[]).includes(initialView ?? "") ? (initialView as LibraryView) : "albums",
   );
+  useEffect(() => {
+    if (view !== "saved" || player.likedTracks.length === 0) return;
+    recordMusicDestination({
+      kind: "liked",
+      id: "saved",
+      name: t("music.saved"),
+      artwork: player.likedTracks.find((track) => track.artwork)?.artwork ?? "",
+    });
+  }, [view, player.likedTracks, t]);
   const [query, setQuery] = useState("");
   const [trackQuery, setTrackQuery] = useState("");
   const [sort, setSort] = useState("default");
@@ -153,13 +190,10 @@ export function MusicLibrary({
     });
     return () => cancelAnimationFrame(frame);
   }, [selectedId, view, library.playlists]);
+  useSectionBack(closePlaylist, active && !!selectedId && view === "playlists");
   useEffect(() => {
     if (!active || !selectedId || view !== "playlists") return;
     playlistHeading.current?.focus({ preventScroll: true });
-    const remove = pushBackHandler(() => {
-      closePlaylist();
-      return true;
-    });
     const escape = (event: KeyboardEvent) => {
       if (
         event.key !== "Escape" ||
@@ -172,10 +206,7 @@ export function MusicLibrary({
       closePlaylist();
     };
     window.addEventListener("keydown", escape, true);
-    return () => {
-      remove();
-      window.removeEventListener("keydown", escape, true);
-    };
+    return () => window.removeEventListener("keydown", escape, true);
   }, [active, selectedId, view, closePlaylist]);
   const openPlaylist = (playlist: MusicPlaylist, button: HTMLButtonElement) => {
     let scroll: Element | null = button.parentElement;
@@ -287,7 +318,9 @@ export function MusicLibrary({
   }, [initialView, initialPlaylistId]);
 
   const localView = view === "albums" || view === "artists" || view === "tracks";
-  const currentQuery = selected && view === "playlists" ? trackQuery : query;
+  const deferredTrackQuery = useDeferredValue(trackQuery);
+  const filteringPlaylist = Boolean(selected && view === "playlists" && trackQuery.trim().toLocaleLowerCase() !== deferredTrackQuery.trim().toLocaleLowerCase());
+  const currentQuery = selected && view === "playlists" ? deferredTrackQuery : query;
   const normalized = currentQuery.trim().toLocaleLowerCase();
   const sourceTracks =
     selected && view === "playlists"
@@ -295,24 +328,19 @@ export function MusicLibrary({
       : view === "saved"
         ? player.likedTracks
         : player.recents;
-  const visibleTracks = sourceTracks.filter(
-    (track) =>
-      !normalized ||
-      `${track.title} ${track.artist} ${track.album ?? ""}`
-        .toLocaleLowerCase()
-        .includes(normalized),
-  );
-  if (sort === "title") visibleTracks.sort((a, b) => a.title.localeCompare(b.title));
-  if (sort === "duration") visibleTracks.sort((a, b) => a.durationSeconds - b.durationSeconds);
+  const visibleTracks = useMemo(() => {
+    const matches = sourceTracks.filter(track => !normalized || `${track.title} ${track.artist} ${track.album ?? ""}`.toLocaleLowerCase().includes(normalized));
+    if (sort === "title") matches.sort((a, b) => a.title.localeCompare(b.title));
+    if (sort === "duration") matches.sort((a, b) => a.durationSeconds - b.durationSeconds);
+    return matches;
+  }, [sourceTracks, normalized, sort]);
   const playlists = library.playlists.filter(
     (playlist) => !normalized || playlist.name.toLocaleLowerCase().includes(normalized),
   );
   const viewLabel = (value: LibraryView) =>
     value === "spotify"
       ? "Spotify"
-      : value === "downloads"
-        ? t("music.download.library")
-        : t(
+      : t(
             value === "saved"
               ? "music.saved"
               : value === "recent"
@@ -325,6 +353,11 @@ export function MusicLibrary({
     ...track,
     kind: "track",
   }));
+  const recentMenu = useMusicItemMenu({ onOpen: (item) => onOpen(item, recentItems) });
+  const playRecent = (track: MusicTrack) => {
+    recordMusicPlaylistPlayback(null);
+    openSourcePicker(track, player.recents);
+  };
   const trackView = view === "saved" || view === "recent" || (!!selected && view === "playlists");
 
   return (
@@ -366,10 +399,17 @@ export function MusicLibrary({
             </button>
           </div>
           <div className="music-library-recent-covers">
-            {recentItems.slice(0, 8).map((item) => (
-              <MusicCoverCard key={item.id} item={item} onOpen={() => onOpen(item, recentItems)} />
+            {recentItems.slice(0, 8).map((item, index) => (
+              <MusicCoverCard
+                key={item.id}
+                item={item}
+                onOpen={() => onOpen(item, recentItems)}
+                onPlay={() => playRecent(player.recents[index])}
+                onMenu={recentMenu.openFor(item, index)}
+              />
             ))}
           </div>
+          {recentMenu.menu}
         </section>
       )}
 
@@ -417,7 +457,6 @@ export function MusicLibrary({
 
       {view !== "spotify" && (
         <>
-          {selected && view === "playlists" && <MusicBackButton onClick={closePlaylist} />}
           <div className="music-library-browser-toolbar">
             <div className="music-library-browser-title">
               <h3>
@@ -481,10 +520,10 @@ export function MusicLibrary({
           onConnect={() => openConnections("local")}
         />
       )}
-      {view === "downloads" && <MusicDownloads query={query} />}
       {view === "spotify" && (
         <MusicSpotifyLibrary
           active={active}
+          initialKind={initialSpotifyKind}
           onImported={(playlist) =>
             setLibrary((current) => ({
               ...current,
@@ -555,10 +594,7 @@ export function MusicLibrary({
                 </form>
               )}
               {loading ? (
-                <p role="status" className="music-library-empty">
-                  <LoaderCircle size={18} className="animate-spin motion-reduce:animate-none" />
-                  {t("music.library.reading")}
-                </p>
+                <MusicPlaylistGridSkeleton />
               ) : playlists.length > 0 ? (
                 <div className="music-library-cover-grid">
                   {playlists.map((playlist) => (
@@ -590,11 +626,7 @@ export function MusicLibrary({
             <>
               <div className="music-library-playlist-hero" ref={playlistHeading} tabIndex={-1}>
                 <div className="music-library-playlist-art">
-                  <MusicPlaylistCover
-                    artwork={selected.tracks.map((track) => track.artwork)}
-                    seed={selected.id}
-                    glyphSize={48}
-                  />
+                  <PlaylistArt playlist={selected} />
                 </div>
                 <div className="music-library-playlist-meta">
                   <PlaylistHeader
@@ -609,17 +641,9 @@ export function MusicLibrary({
                       closePlaylist();
                     }}
                     onError={setError}
+                    onExport={exportM3u}
                   />
                   <span>{t("music.card.trackCount", { count: selected.tracks.length })}</span>
-                  <button
-                    type="button"
-                    className="music-library-text"
-                    disabled={working || !selected.tracks.length}
-                    onClick={exportM3u}
-                  >
-                    <FileDown size={16} />
-                    {t("music.m3u.export")}
-                  </button>
                 </div>
               </div>
               <LibraryTrackList
@@ -629,6 +653,8 @@ export function MusicLibrary({
                 }
                 tracks={visibleTracks}
                 order={selected.tracks}
+                filtering={filteringPlaylist}
+                filterKey={normalized}
                 likedIds={player.likedIds}
                 onRemove={removeTrack}
                 onMove={moveTrack}
@@ -640,7 +666,20 @@ export function MusicLibrary({
                   className="music-library-add-tracks"
                   onToggle={(event) => setAdding(event.currentTarget.open)}
                 >
-                  <summary>{t("music.library.readyForPlaylist", { name: selected.name })}</summary>
+                  <summary>
+                    <span className="music-library-add-art">
+                      <MusicPlaylistCover
+                        artwork={selected.tracks.map((track) => track.artwork)}
+                        seed={selected.id}
+                        glyphSize={20}
+                      />
+                    </span>
+                    <span className="music-library-add-copy">
+                      <strong>{t("music.library.readyForPlaylist", { name: selected.name })}</strong>
+                      <small>{t("music.trackCount", { count: selected.tracks.length })}</small>
+                    </span>
+                    <ChevronDown size={18} className="music-library-add-chev" aria-hidden />
+                  </summary>
                   {adding && (
                     <>
                       {player.likedTracks.length > 0 && (
@@ -673,7 +712,7 @@ export function MusicLibrary({
       )}
       {(view === "saved" || view === "recent") && (
         <LibraryTrackList
-          title={viewLabel(view)}
+          title={view === "recent" ? "" : viewLabel(view)}
           subtitle={t("music.search.resultCount", { count: visibleTracks.length })}
           tracks={visibleTracks}
           likedIds={player.likedIds}

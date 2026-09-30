@@ -1,7 +1,21 @@
+import mediaStart from "./en/media-start";
+import spooktober from "./en/spooktober";
 import music from "./en/music";
 import settingsRefinements from "./en/settings-refinements";
 
+import nytTv from "./en/nyt-tv";
+import curatedLists from "./en/curated-lists";
+import filmRegistry from "./en/film-registry";
+import personCraft from "./en/person-craft";
+import country from "./en/country";
+import adaptation from "./en/adaptation";
+import production from "./en/production";
+import criticism from "./en/criticism";
+import soundtrack from "./en/soundtrack";
+
 const en: Record<string, string> = {
+  ...mediaStart,
+  ...spooktober,
   ...videoCast,
   ...music,
   Soccer: "Football",
@@ -10,6 +24,7 @@ const en: Record<string, string> = {
   "nav.home": "Home",
   "nav.discover": "Discover",
   "nav.catalogs": "Catalogs",
+  "nav.plugins": "Plugins",
   "nav.movies": "Movies",
   "nav.shows": "Shows",
   "nav.people": "Top People",
@@ -298,6 +313,15 @@ const en: Record<string, string> = {
   "update.of": "{downloaded} of {total}",
   "mpv.conf": "mpv.conf",
   ...settingsRefinements,
+  ...nytTv,
+  ...curatedLists,
+  ...filmRegistry,
+  ...adaptation,
+  ...production,
+  ...criticism,
+  ...soundtrack,
+  ...country,
+  ...personCraft,
 };
 
 export default en;

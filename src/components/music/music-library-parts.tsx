@@ -1,15 +1,21 @@
+import { MusicTrackRowsSkeleton } from "./music-skeletons";
+import { useMusicTrackMenuItems } from "./music-track-menu";
+import { requestMusicExplore } from "@/lib/music/navigation";
+import { HoverTooltip } from "@/components/hover-tooltip";
 import { isMusicLiked } from "@/lib/music/liked";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
+  FileDown,
+  PlaylistVariation,
+  PlaylistRename,
+  Trash2,
   ChevronDown,
   ChevronUp,
   Heart,
-  ListPlus,
   MoreHorizontal,
-  Play,
   Plus,
   X,
-} from "lucide-react";
+} from "@/components/icons/music-icons";
 import { AnchoredMenu } from "@/components/anchored-menu";
 import { MusicPlaylistCover } from "./music-playlist-cover";
 import { MusicCollectionControls } from "./music-collection-controls";
@@ -18,12 +24,16 @@ import { MusicMediaBadge } from "./music-media-badge";
 import { useMusicPlaylistPicker } from "./music-playlist-picker";
 import { useMusicSourcePicker } from "./music-source-picker";
 import { useT } from "@/lib/i18n";
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle } from "@/components/icons/music-icons";
 import { nowPlayingMatches } from "@/lib/music/now-playing-key";
+import "./music-like-burst.css";
+
+const ROW_LIKE_SPOKES = [0, 45, 90, 135, 180, 225, 270, 315];
+import { addTrackToMusicPlaylist, createMusicPlaylist } from "@/lib/music/library";
 import { recordMusicPlaylistPlayback } from "@/lib/music/playback-origin";
 import { useMusicNowPlaying } from "@/lib/music/use-now-playing";
 import { deleteMusicPlaylist, renameMusicPlaylist } from "@/lib/music/library";
-import { enqueueMusic, toggleMusicLiked } from "@/lib/music/player";
+import { getMusicState, enqueueMusic, toggleMusicLiked } from "@/lib/music/player";
 import type { MusicPlaylist, MusicTrack } from "@/lib/music/types";
 
 export function LibraryTrackList({
@@ -37,6 +47,8 @@ export function LibraryTrackList({
   onMove,
   selectedPlaylist,
   emptyCopy,
+  filtering = false,
+  filterKey,
 }: {
   title: string;
   subtitle: string;
@@ -48,18 +60,29 @@ export function LibraryTrackList({
   onMove?: (track: MusicTrack, toIndex: number) => void;
   selectedPlaylist: MusicPlaylist | null;
   emptyCopy?: string;
+  filtering?: boolean;
+  filterKey?: string;
 }) {
   const t = useT();
   const now = useMusicNowPlaying();
+  const resultsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (filterKey === undefined || filtering || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const animation = resultsRef.current?.animate(
+      [{ opacity: 0.45, transform: "translateY(3px)" }, { opacity: 1, transform: "translateY(0)" }],
+      { duration: 160, easing: "cubic-bezier(.2,.7,.3,1)" },
+    );
+    return () => animation?.cancel();
+  }, [filterKey, filtering]);
   const play = (track: MusicTrack, queue: MusicTrack[]) => {
-    recordMusicPlaylistPlayback(selectedPlaylist);
+    recordMusicPlaylistPlayback(selectedPlaylist, queue);
     openSourcePicker(track, queue);
   };
   const { openSourcePicker } = useMusicSourcePicker();
   const positions = new Map(order.map((track, index) => [track.id, index]));
   const added = new Set(selectedPlaylist?.tracks.map((track) => track.id));
   return (
-    <section className="music-library-tracklist">
+    <section className="music-library-tracklist" aria-busy={filtering}>
       <div className="music-library-tracklist-header">
         <div>
           {title && <h3>{title}</h3>}
@@ -71,7 +94,8 @@ export function LibraryTrackList({
           <span>{tracks.length}</span>
         )}
       </div>
-      {tracks.length ? (
+      <div ref={resultsRef}>
+      {filtering ? <MusicTrackRowsSkeleton rows={Math.max(1, Math.min(tracks.length || order.length, 6))} /> : tracks.length ? (
         <div>
           {tracks.map((track) => (
             <LibraryTrack
@@ -94,6 +118,7 @@ export function LibraryTrackList({
       ) : (
         <p className="music-library-empty">{emptyCopy ?? t("music.library.saveEmpty")}</p>
       )}
+      </div>
     </section>
   );
 }
@@ -128,6 +153,12 @@ function LibraryTrack({
   const t = useT();
   const { openSourcePicker } = useMusicSourcePicker();
   const { openPlaylistPicker } = useMusicPlaylistPicker();
+  const shared = useMusicTrackMenuItems(track, {
+    onPlay: () => start(track, tracks),
+    onAddToQueue: () => enqueueMusic(track),
+    onAddToPlaylist: () => openPlaylistPicker(track),
+    onMoreLikeThis: () => requestMusicExplore({ kind: "similar", track }),
+  });
   const anchor = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement | null>(null);
   const bindMenu = useCallback((node: HTMLDivElement | null) => {
@@ -143,22 +174,13 @@ function LibraryTrack({
     openSourcePicker(item, queue);
   };
   const [open, setOpen] = useState(false);
+  const [burst, setBurst] = useState(0);
   const close = () => {
     if (menu.current?.contains(document.activeElement)) anchor.current?.focus();
     setOpen(false);
   };
   const actions = [
-    { label: t("music.play"), icon: <Play size={16} />, run: () => start(track, tracks) },
-    {
-      label: t("music.card.addToQueue"),
-      icon: <ListPlus size={16} />,
-      run: () => enqueueMusic(track),
-    },
-    {
-      label: t("music.card.addToPlaylist"),
-      icon: <Plus size={16} />,
-      run: () => openPlaylistPicker(track),
-    },
+    ...shared,
     {
       label: t(liked ? "music.unsaveTrack" : "music.saveTrack"),
       icon: <Heart size={16} fill={liked ? "currentColor" : "none"} />,
@@ -199,7 +221,13 @@ function LibraryTrack({
       className="music-library-track"
       data-library-track={track.id}
       data-now-playing={nowPlaying || undefined}
+      data-menu-open={open || undefined}
       aria-current={nowPlaying ? "true" : undefined}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(true);
+      }}
     >
       <span className="music-library-track-number">{String(index + 1).padStart(2, "0")}</span>
       <div className="music-library-track-play">
@@ -244,6 +272,39 @@ function LibraryTrack({
           </span>
         </span>
       </div>
+      <button
+        type="button"
+        className="music-library-track-save"
+        data-like-burst
+        data-burst={burst || undefined}
+        data-saved={liked || undefined}
+        aria-pressed={liked}
+        aria-label={t(liked ? "music.unsaveTrack" : "music.saveTrack")}
+        title={t(liked ? "music.unsaveTrack" : "music.saveTrack")}
+        onClick={() => {
+          if (!liked) setBurst((count) => count + 1);
+          toggleMusicLiked(track);
+        }}
+      >
+        <Heart size={16} fill={liked ? "currentColor" : "none"} aria-hidden="true" />
+        {burst > 0 && liked && (
+          <span key={burst} className="dock-like-burst" aria-hidden="true">
+            <span className="dock-like-ring" />
+            {ROW_LIKE_SPOKES.map((rotate, index) => (
+              <span
+                key={index}
+                className="dock-like-dot"
+                style={
+                  {
+                    "--rotate": `${rotate}deg`,
+                    "--translate-y": index % 2 ? "-14px" : "-18px",
+                  } as CSSProperties
+                }
+              />
+            ))}
+          </span>
+        )}
+      </button>
       <span className="music-library-track-duration">{track.durationLabel}</span>
       <button
         type="button"
@@ -313,14 +374,40 @@ export function PlaylistHeader({
   onRenamed,
   onDeleted,
   onError,
+  onExport,
 }: {
   playlist: MusicPlaylist;
   working: boolean;
   onRenamed: (playlist: MusicPlaylist) => void;
   onDeleted: (playlistId: string) => void;
+  onExport: () => void;
   onError: (message: string | null) => void;
 }) {
   const t = useT();
+  const [cloning, setCloning] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const likeButton = useRef<HTMLButtonElement | null>(null);
+  const cloneLikeThis = async (freshOnly: boolean) => {
+    if (cloning) return;
+    setAsking(false);
+    setCloning(true);
+    onError(null);
+    try {
+      const { loadPlaylistLikeThis } = await import("@/lib/music/radio");
+      const heard = freshOnly ? getMusicState().recents : [];
+      const mix = await loadPlaylistLikeThis(playlist.tracks, undefined, heard);
+      const made = await createMusicPlaylist(
+        t("music.playlist.likeThisName", { name: playlist.name }),
+      );
+      let built = made;
+      for (const track of mix) built = await addTrackToMusicPlaylist(built.id, track);
+      onRenamed(built);
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setCloning(false);
+    }
+  };
   // Stored tracks may carry no playbackUrl, so playing goes through the picker rather than
   // straight to the engine.
   const { openSourcePicker } = useMusicSourcePicker();
@@ -416,28 +503,75 @@ export function PlaylistHeader({
         <MusicCollectionControls
           tracks={playlist.tracks}
           onPlay={(track, queue) => {
-            recordMusicPlaylistPlayback(playlist);
+            recordMusicPlaylistPlayback(playlist, queue);
             openSourcePicker(track, queue);
           }}
           disabled={working || busy}
         />
+        <HoverTooltip label={t(cloning ? "music.playlist.likeThisWorking" : "music.playlist.likeThis")} side="top" align="center">
+        <button
+          ref={likeButton}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={asking}
+          aria-label={t(cloning ? "music.playlist.likeThisWorking" : "music.playlist.likeThis")}
+          disabled={working || busy || cloning || playlist.tracks.length === 0}
+          onClick={() => setAsking(true)}
+          className="grid size-11 shrink-0 place-items-center rounded-full text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+        >
+          <PlaylistVariation size={30} />
+        </button>
+        </HoverTooltip>
+        <AnchoredMenu
+          anchorRef={likeButton}
+          open={asking}
+          onClose={() => setAsking(false)}
+          width={264}
+        >
+          <div role="menu" className="music-like-this-ask">
+            <p>{t("music.playlist.likeThisAsk")}</p>
+            <button type="button" role="menuitem" onClick={() => void cloneLikeThis(true)}>
+              {t("music.playlist.likeThisFresh")}
+            </button>
+            <button type="button" role="menuitem" onClick={() => void cloneLikeThis(false)}>
+              {t("music.playlist.likeThisHeard")}
+            </button>
+          </div>
+        </AnchoredMenu>
+        <HoverTooltip label={t("music.playlist.rename")} side="top" align="center">
         <button
           type="button"
+          aria-label={t("music.playlist.rename")}
           ref={renameButton}
           disabled={working || busy}
           onClick={() => setRenaming(true)}
-          className="rounded-full px-3 py-1.5 text-[13px] text-ink-muted transition-colors hover:text-ink disabled:opacity-50"
+          className="grid size-11 shrink-0 place-items-center rounded-full text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
         >
-          {t("music.playlist.rename")}
+          <PlaylistRename size={26} />
         </button>
+        </HoverTooltip>
+        <HoverTooltip label={t("music.playlist.delete")} side="top" align="center">
         <button
           type="button"
+          aria-label={t("music.playlist.delete")}
           disabled={working || busy}
           onClick={() => void remove()}
-          className="rounded-full px-3 py-1.5 text-[13px] text-ink-muted transition-colors hover:text-danger disabled:opacity-50"
+          className="grid size-11 shrink-0 place-items-center rounded-full text-ink-muted transition-colors hover:text-danger focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
         >
-          {t("music.playlist.delete")}
+          <Trash2 size={26} />
         </button>
+        </HoverTooltip>
+        <HoverTooltip label={t("music.m3u.export")} side="top" align="center">
+          <button
+            type="button"
+            aria-label={t("music.m3u.export")}
+            disabled={working || busy || !playlist.tracks.length}
+            onClick={onExport}
+            className="grid size-11 shrink-0 place-items-center rounded-full text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+          >
+            <FileDown size={26} />
+          </button>
+        </HoverTooltip>
       </div>
     </div>
   );

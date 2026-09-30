@@ -94,6 +94,15 @@ export type ScreensaverMedia = {
   kind: ScreensaverMediaKind;
 };
 
+export type MusicSpeedPreset = {
+  id: string;
+  name: string;
+  speed: number;
+  pitch: number;
+  reverb: number;
+  keepPitch: boolean;
+};
+
 export type Settings = {
   soundTheme: "none" | "glass" | "modern" | "retro" | "cinematic";
   sfxVolume: number;
@@ -266,6 +275,7 @@ export type Settings = {
   discordShowPoster: boolean;
   discordShowTimestamp: boolean;
   discordShowPartyJoin: boolean;
+  discordMusicPresence: boolean;
   playerEngine: "auto" | "html5" | "mpv";
   playerShellId: string;
   playerChromeTheme: "auto" | "default" | "stremio";
@@ -487,6 +497,8 @@ export type Settings = {
   defaultProfileId: string;
   sportsLeagues: string[];
   sportsShowOdds: boolean;
+  /** Scores and schedules need no provider; streams do. Off until asked for. */
+  sportsWithoutProvider: boolean;
   hideSpoilers: boolean;
   spoilerHideThumbnails: boolean;
   spoilerHideTitles: boolean;
@@ -502,6 +514,10 @@ export type Settings = {
   customLogoWordmark: string;
   customAppIcon: string;
   customAppIconPreset: string;
+  musicArtworkAppIcon: boolean;
+  musicSeekThumb: boolean;
+  musicSeekThumbHover: boolean;
+  musicSpeedPresets: MusicSpeedPreset[];
   homeMode: "harbor" | "classic";
   homeShowAllAddonRows: boolean;
   homeNewEpisodes: boolean;
@@ -528,9 +544,18 @@ export type Settings = {
   dragAnywhere: boolean;
   resumeDetailScroll: boolean;
   pluginsEnabled: boolean;
+  /** Whether anything outside the Plugins page may ask a plugin that stands up rows of its own.
+   * Off by default, so those extensions are asked on their own page only. A plugin with no rows of
+   * its own is asked either way, because nothing else would ever reach it. */
+  pluginsOutsideTab: boolean;
   pluginsGroupByRepo: boolean;
   pluginsAutoCheck: boolean;
   pluginsBackground: boolean;
+  /** Badges on the Plugins tab's posters, read out of the listing titles a provider sends. Off by
+   * default: a provider's title carries whatever it wants to say, and not everyone wants a poster
+   * with a language strip on it. */
+  pluginsPosterLanguages: boolean;
+  pluginsPosterQuality: boolean;
   cwPerProfile: boolean;
   closeToTray: boolean;
   trayAlwaysOnTop: boolean;
@@ -594,6 +619,7 @@ export type Settings = {
   seekBarFill: boolean;
   seekBarFillOpacity: number;
   seekDotShape: "circle" | "square" | "image" | "hidden";
+  seekDotHover: boolean;
   seekDotSize: number;
   seekDotImage: string;
   customCss: string;

@@ -1283,8 +1283,10 @@ fn spawn_event_loop(
                                 let gamma = mpv_keepalive
                                     .get_property::<String>("video-params/gamma")
                                     .unwrap_or_default();
-                                let active = gamma == "pq" || gamma == "hlg";
-                                apply_mac_edr(&app, &mpv_keepalive, active);
+                                if !gamma.is_empty() {
+                                    let active = gamma == "pq" || gamma == "hlg";
+                                    apply_mac_edr(&app, &mpv_keepalive, active);
+                                }
                             }
                         }
                     }
@@ -1545,14 +1547,13 @@ pub async fn mpv_set_geometry(
     }
     #[cfg(target_os = "macos")]
     {
-        let (tx, rx) = std::sync::mpsc::sync_channel(1);
         app.run_on_main_thread(move || {
-            let _ = tx.send(crate::mpv_render_mac::resize_to(geom));
+            if let Err(error) = crate::mpv_render_mac::resize_to(geom) {
+                eprintln!("[harbor::mpv] macOS resize rejected: {error}");
+            }
         })
         .map_err(|error| format!("failed to schedule macOS mpv resize: {error}"))?;
-        return rx
-            .recv_timeout(std::time::Duration::from_millis(300))
-            .map_err(|error| format!("timed out waiting for macOS mpv resize: {error}"))?;
+        return Ok(());
     }
     #[cfg(target_os = "linux")]
     {
@@ -2405,6 +2406,27 @@ pub async fn mpv_sub_add(
         return Err(format!("sub-add failed: mpv_command rc={}", rc));
     }
     Ok(())
+}
+
+/// Remove an external subtitle track by its mpv track id.
+///
+/// A provider subtitle can be re-fetched (for example a translating addon that only
+/// serves the finished file once it is ready). Removing the previous track first lets
+/// the refreshed subtitle replace it instead of stacking a duplicate. mpv only allows
+/// this for external subtitle files, which is exactly the case here.
+#[tauri::command]
+pub async fn mpv_sub_remove(state: State<'_, MpvState>, id: String) -> Result<(), String> {
+    let mpv = {
+        let g = state.inner.lock().await;
+        g.as_ref()
+            .map(|s| s.mpv.clone())
+            .ok_or_else(|| "mpv not started".to_string())?
+    };
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("sub-remove requires a track id".to_string());
+    }
+    mpv_argv_command(&mpv, &["sub-remove", id])
 }
 
 fn sub_cache_dir() -> PathBuf {

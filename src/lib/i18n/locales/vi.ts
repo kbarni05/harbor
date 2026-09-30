@@ -1,3 +1,5 @@
+import mediaStart from "./vi/media-start";
+import spooktober from "./vi/spooktober";
 import listenTogether from "./vi/listen-together";
 import music from "./vi/music";
 import sportsConsent from "./vi/sports-consent";
@@ -46,7 +48,11 @@ import plugins from "./vi/plugins";
 import brands from "./vi/brands";
 import bpSports from "./vi/bp-sports";
 
+import nytTv from "./vi/nyt-tv";
+
 const vi: Record<string, string> = {
+  ...mediaStart,
+  ...spooktober,
   ...videoCast,
   ...music,
   ...ebookSources,
@@ -95,6 +101,7 @@ const vi: Record<string, string> = {
   ...esportsArena,
   ...bpSports,
   ...listenTogether,
+  ...nytTv,
 };
 
 export default vi;
