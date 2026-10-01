@@ -55,6 +55,7 @@ jobs:
         if: inputs.existing_build_run_id == ''
         with:
           workspaces: src-tauri
+          cache-on-failure: "true"
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
@@ -182,6 +183,7 @@ jobs:
       - name: Check combined native Windows source
         if: inputs.existing_build_run_id == ''
         run: |
+          $env:TAURI_CONFIG = Get-Content $env:HARBOR_INSTALLER_CONFIG -Raw
           $output = [System.Collections.Generic.Queue[string]]::new()
           & cargo check --manifest-path src-tauri/Cargo.toml --release --locked --target x86_64-pc-windows-msvc 2>&1 | ForEach-Object {
             $line = "$_"
