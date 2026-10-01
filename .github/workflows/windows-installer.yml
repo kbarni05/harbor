@@ -256,11 +256,12 @@ jobs:
             'yt-dlp.exe' = 'src-tauri/binaries/yt-dlp-x86_64-pc-windows-msvc.exe'
           }
           foreach ($name in $inputs.Keys) {
-            $matches = @(Get-ChildItem $extracted -Recurse -File | Where-Object Name -eq $name)
+            $matches = @(Get-ChildItem $extracted -Recurse -Force -File | Where-Object Name -eq $name)
             $expectedHash = (Get-FileHash $inputs[$name] -Algorithm SHA256).Hash
             if (-not ($matches | Where-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash -eq $expectedHash })) {
-              $payloadNames = ((Get-ChildItem $extracted -Recurse -File).Name -join ', ')
-              Write-Host "::error title=Installer payload validation::Missing or stale: $name. Extracted files: $payloadNames"
+              $payloadNames = ((Get-ChildItem $extracted -Recurse -Force -File).Name -join ', ')
+              $actualHashes = ($matches | ForEach-Object { "$($_.FullName): $((Get-FileHash $_.FullName -Algorithm SHA256).Hash) ($($_.Length) bytes)" }) -join '; '
+              Write-Host "::error title=Installer payload validation::Missing or stale: $name. Expected SHA-256: $expectedHash. Actual: $actualHashes. Extracted files: $payloadNames"
               throw "Installer payload is missing or stale: $name"
             }
           }
