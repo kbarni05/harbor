@@ -2859,9 +2859,15 @@ fn prepare_subtitle_download(
 mod subtitle_download_tests {
     use super::{
         extract_subtitle_from_zip, normalize_subtitle_bytes, prepare_subtitle_download,
-        subtitle_extension, read_subtitle_limited, SUBTITLE_ARCHIVE_ENTRIES,
+        read_subtitle_limited, subtitle_extension, SUBTITLE_ARCHIVE_ENTRIES,
     };
     use std::io::{Cursor, Write};
+
+    #[test]
+    fn refuses_an_oversized_subtitle_body() {
+        assert!(read_subtitle_limited(&b"12345"[..], 4).is_err());
+        assert_eq!(read_subtitle_limited(&b"1234"[..], 4).unwrap(), b"1234");
+    }
 
     fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut cursor = Cursor::new(Vec::new());
