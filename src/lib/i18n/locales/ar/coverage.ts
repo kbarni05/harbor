@@ -1,7 +1,25 @@
-const coverage: Record<string, string> = {
+const coverage: Record<string, string> = {
+  "Favorite page": "صفحة مفضلة",
+  "This Settings page": "إعدادات هذه الصفحة",
+  "These preferences apply only to the page you are viewing.":
+    "تنطبق هذه التفضيلات على الصفحة التي تعرضها حاليًا فقط.",
+  "Keep at the top of its menu group": "إبقاء الصفحة في أعلى مجموعتها بالقائمة",
+  "Marks this page with a star and moves it before the other pages in the same group.":
+    "يضع نجمة على هذه الصفحة وينقلها قبل الصفحات الأخرى في المجموعة نفسها.",
+  "Compact page spacing": "تباعد مضغوط للصفحة",
+  "Fits more settings on screen by reducing card spacing without changing any feature.":
+    "يعرض إعدادات أكثر على الشاشة عبر تقليل المسافات بين البطاقات من دون تغيير أي ميزة.",
+  "Show page introduction": "إظهار مقدمة الصفحة",
+  "Shows the short explanation below this page's title.":
+    "يعرض الشرح المختصر أسفل عنوان هذه الصفحة.",
+  "Automatic HDR / Dolby Vision": "HDR / Dolby Vision تلقائي",
+  "Uses the active display's Windows HDR calibration. Dolby Vision is reshaped by libplacebo and output as display-matched HDR/PQ; SDR displays are handled automatically.":
+    "يستخدم معايرة HDR في Windows للشاشة النشطة. يعيد libplacebo تشكيل Dolby Vision ويخرجه بصيغة HDR/PQ المطابقة للشاشة، بينما تُعالَج شاشات SDR تلقائيًا.",
+
   "Sound descriptions": "أوصاف الأصوات",
   "Hide sound effects and speaker names": "إخفاء المؤثرات الصوتية وأسماء المتحدثين",
-  "Removes bracketed descriptions like [door creaks] and shouted speaker labels like JOHN: while subtitles play, so a release that only ships an SDH track still reads as plain dialogue. Song lyrics, ordinary parentheses and non-Latin scripts are left alone. Skipped on forced and picture-based tracks.": "يزيل الأوصاف الموضوعة بين قوسين معقوفين مثل [صرير الباب] وأسماء المتحدثين المكتوبة بأحرف لاتينية كبيرة مثل JOHN: أثناء عرض الترجمة، حتى تُقرأ النسخة التي لا تتوفر إلا بمسار SDH كحوار عادي. تبقى كلمات الأغاني والأقواس العادية والكتابات غير اللاتينية كما هي. لا يُطبَّق على المسارات المفروضة ولا على المسارات الصورية.",
+  "Removes bracketed descriptions like [door creaks] and shouted speaker labels like JOHN: while subtitles play, so a release that only ships an SDH track still reads as plain dialogue. Song lyrics, ordinary parentheses and non-Latin scripts are left alone. Skipped on forced and picture-based tracks.":
+    "يزيل الأوصاف الموضوعة بين قوسين معقوفين مثل [صرير الباب] وأسماء المتحدثين المكتوبة بأحرف لاتينية كبيرة مثل JOHN: أثناء عرض الترجمة، حتى تُقرأ النسخة التي لا تتوفر إلا بمسار SDH كحوار عادي. تبقى كلمات الأغاني والأقواس العادية والكتابات غير اللاتينية كما هي. لا يُطبَّق على المسارات المفروضة ولا على المسارات الصورية.",
   "Play from": "التشغيل من",
   end: "النهاية",
   "m:ss": "د:ث",

@@ -4,6 +4,7 @@ import { applyMotionInterp } from "@/lib/player/motion-interp";
 import { applyRtxVideo, resetRtxVideoState } from "@/lib/player/rtx-video";
 import { applySubStyle } from "@/lib/player/sub-style";
 import type { useSettings } from "@/lib/settings";
+import { effectiveHdrToSdr } from "@/lib/player/hdr-output-policy";
 
 export function useSubStyleApply(params: {
   engine: "html5" | "mpv";
@@ -33,6 +34,7 @@ export function useSubStyleApply(params: {
     subTrackId,
     sdhFilterAllowed,
   } = params;
+  const hdrToSdr = effectiveHdrToSdr(settings);
 
   useEffect(() => {
     if (engine !== "mpv") return;
@@ -79,10 +81,7 @@ export function useSubStyleApply(params: {
     if ((isMacDesktop() || isLinuxDesktop()) && settings.playerMpvEmbed) return;
     if (!bridgeReady) return;
     if (!mediaReady || !sourceGamma) {
-      void applyRtxVideo(
-        { hdr: false, vsr: false, svpActive, hdrToSdr: settings.playerHdrToSdr },
-        bridgeKey,
-      );
+      void applyRtxVideo({ hdr: false, vsr: false, svpActive, hdrToSdr }, bridgeKey);
       return;
     }
     void applyMotionInterp(settings.playerMotionInterp && !svpActive);
@@ -91,7 +90,7 @@ export function useSubStyleApply(params: {
         hdr: settings.playerRtxHdr,
         vsr: settings.playerRtxVsr,
         svpActive,
-        hdrToSdr: settings.playerHdrToSdr,
+        hdrToSdr,
       },
       bridgeKey,
     );
@@ -104,7 +103,7 @@ export function useSubStyleApply(params: {
     svpActive,
     settings.playerMpvEmbed,
     settings.playerMotionInterp,
-    settings.playerHdrToSdr,
+    hdrToSdr,
     settings.playerRtxHdr,
     settings.playerRtxVsr,
   ]);

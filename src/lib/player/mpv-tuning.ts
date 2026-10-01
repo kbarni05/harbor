@@ -1,5 +1,6 @@
 import type { Settings } from "@/lib/settings";
 import { bufferMpvLines, bufferSizeFor } from "./buffer-profile";
+import { effectiveHdrToSdr } from "@/lib/player/hdr-output-policy";
 
 const QUALITY_LINES: Record<Settings["mpvQuality"], string[]> = {
   balanced: [],
@@ -34,7 +35,7 @@ export function compileMpvOptions(s: Settings): string {
   lines.push(...bufferMpvLines(bufferSizeFor(s)));
   if (s.mpvDownmixStereo) lines.push("audio-channels=stereo");
   if (s.audioDevice && s.audioDevice !== "auto") lines.push(`audio-device=${s.audioDevice}`);
-  if (s.playerDisplayPanel === "oled" && s.playerHdrToSdr) lines.push("target-contrast=inf");
+  if (s.playerDisplayPanel === "oled" && effectiveHdrToSdr(s)) lines.push("target-contrast=inf");
   for (const [k, v] of Object.entries(s.mpvTweaks ?? {})) {
     if (v !== "" && v != null) lines.push(`${k}=${v}`);
   }
@@ -56,7 +57,8 @@ export function mergeMpvOptions(s: Settings, svpActive: boolean): string | undef
   return merged.trim() ? merged : undefined;
 }
 
-const RISKY = /^(scripts?|load-script|input-ipc-server|input-conf|input-cmdlist|ytdl-raw-options)$/i;
+const RISKY =
+  /^(scripts?|load-script|input-ipc-server|input-conf|input-cmdlist|ytdl-raw-options)$/i;
 
 export type MpvLineCheck = { valid: number; skipped: number; risky: string[] };
 

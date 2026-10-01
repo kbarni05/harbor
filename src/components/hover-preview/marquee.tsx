@@ -15,7 +15,9 @@ import {
 import { Play } from "@/components/icons/play-filled";
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Meta } from "@/lib/cinemeta";
+import { advisoryCategoryLabel, normalizeContentAdvisories } from "@/lib/content-advisory";
 import type { PreviewData } from "@/lib/hover-preview/preview-data";
+import { useT } from "@/lib/i18n";
 import { peekCachedLogo, resolveLogo } from "@/lib/logo";
 import { markMetaWatched } from "@/lib/mark-watched";
 import {
@@ -26,7 +28,6 @@ import {
 import { tmdbImdbCached } from "@/lib/providers/tmdb";
 import { useSettings } from "@/lib/settings";
 import { toggleWatchlist, useInWatchlist } from "@/lib/watchlist";
-import { useT } from "@/lib/i18n";
 import { PreviewBlock } from "./block";
 import { CrownArt, PreviewCrown } from "./crown";
 
@@ -60,7 +61,6 @@ function useCrownLogo(meta: Meta): string | undefined {
   return logo;
 }
 
-const ADVISORY_SEV: Record<string, number> = { Mild: 1, Moderate: 2, Severe: 3 };
 const ADVISORY_COLOR: Record<string, string> = {
   Severe: "text-red-300",
   Moderate: "text-amber-300",
@@ -111,16 +111,13 @@ function useAdvisory(imdbId: string | undefined): ParentalCategory[] {
 function AdvisoryStrip({ imdbId }: { imdbId: string | undefined }) {
   const t = useT();
   const cats = useAdvisory(imdbId);
-  const rated = cats
-    .filter((c) => ADVISORY_SEV[c.severity])
-    .sort((a, b) => (ADVISORY_SEV[b.severity] ?? 0) - (ADVISORY_SEV[a.severity] ?? 0))
-    .slice(0, 4);
+  const rated = normalizeContentAdvisories(cats).slice(0, 4);
   if (rated.length === 0) return null;
   return (
     <div data-stagger="2" className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
       {rated.map((c) => {
         const { Icon, label, builtIn } = advisoryChip(c.category);
-        const displayLabel = builtIn ? t(label) : label;
+        const displayLabel = builtIn ? t(advisoryCategoryLabel(label)) : label;
         return (
           <span
             key={c.category}

@@ -53,6 +53,7 @@ export function GamepadRunner() {
   axes.current = live.axes;
 
   useEffect(() => {
+    if (!settings.controllerSupportEnabled || pads.length === 0) return;
     const style = document.createElement("style");
     style.setAttribute("data-gamepad-hover-styles", "");
     document.head.appendChild(style);
@@ -75,10 +76,10 @@ export function GamepadRunner() {
       observer.disconnect();
       style.remove();
     };
-  }, []);
+  }, [pads.length, settings.controllerSupportEnabled]);
 
   useEffect(() => {
-    if (pads.length === 0) {
+    if (!settings.controllerSupportEnabled || pads.length === 0) {
       active.current = false;
       cursor.current?.style.setProperty("opacity", "0");
       return;
@@ -194,14 +195,34 @@ export function GamepadRunner() {
           el = el.parentElement;
         (el ?? document.scrollingElement)?.scrollBy({ top: ly * 600 * dt });
       }
+      if (document.visibilityState === "visible") frame = requestAnimationFrame(tick);
+    };
+    const start = () => {
+      if (document.visibilityState !== "visible" || frame) return;
+      previous = performance.now();
       frame = requestAnimationFrame(tick);
     };
-    frame = requestAnimationFrame(tick);
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        if (frame) cancelAnimationFrame(frame);
+        frame = 0;
+        cursor.current?.style.setProperty("opacity", "0");
+      } else start();
+    };
+    window.addEventListener("blur", refresh);
+    document.addEventListener("visibilitychange", onVisibility);
+    start();
     return () => {
       cancelAnimationFrame(frame);
       window.removeEventListener("blur", refresh);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [pads.length, settings.controllerDeadzone, settings.controllerCursorSpeed]);
+  }, [
+    pads.length,
+    settings.controllerDeadzone,
+    settings.controllerCursorSpeed,
+    settings.controllerSupportEnabled,
+  ]);
 
   // Yield the pointer to the mouse/keyboard. Only real user input counts: the
   // runner dispatches synthetic events itself, filtered via `isTrusted`.
@@ -339,6 +360,8 @@ export function GamepadRunner() {
     )
       document.querySelector<HTMLElement>("[data-player-subtitles]")?.click();
   }, [live.buttons.west, keyboard, captured]);
+
+  if (!settings.controllerSupportEnabled) return null;
 
   return createPortal(
     <>

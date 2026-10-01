@@ -17,13 +17,14 @@ const EXPECTED: UiLanguage[] = [
   "ko",
   "pl",
   "pt",
+  "hu",
   "ru",
   "es",
   "tr",
   "vi",
 ];
 
-test("the display language registry exposes English and fifteen translations", () => {
+test("the display language registry exposes English and sixteen translations", () => {
   assert.deepEqual(
     LANGUAGES.map(({ code }) => code),
     EXPECTED,

@@ -108,8 +108,25 @@ jobs:
             }
           }
 
-      - name: Verify cloud-settings regression tests
-        run: node --experimental-loader ./scripts/node-test-loader.mjs --test tests/cloud-settings-sync.test.ts
+      - name: Check combined frontend types
+        run: pnpm run typecheck
+
+      - name: Verify combined custom regression tests
+        run: >-
+          node --experimental-loader ./scripts/node-test-loader.mjs --test
+          tests/cloud-settings-sync.test.ts tests/hungarian-locale.test.ts
+          tests/preferred-meta.test.ts tests/content-advisory.test.ts
+          tests/playback-stats.test.ts tests/reported-player-regressions.test.ts
+          tests/general-performance-regressions.test.ts tests/hdr-dolby-vision-policy.test.ts
+          tests/settings-page-preferences.test.ts tests/subtitle-addon-reach.test.ts
+          tests/subtitle-picker-all-tracks.test.ts tests/performance-ux-regressions.test.ts
+          tests/mpv-ui-backend-contract.test.ts tests/tray-and-xray-performance.test.ts
+          tests/skip-and-trickplay-regressions.test.ts tests/visibility.test.ts
+          tests/player-buffer-policy.test.ts tests/mpv-cache-retention.test.ts
+          tests/playback-critical-path.test.ts tests/subtitle-fetch-selection.test.ts
+          tests/subtitle-wyzie-language.test.ts tests/settings-translations.test.ts
+          tests/i18n-languages.test.ts tests/hdr-overlay-providers.test.mjs
+          tests/watchlist-identity.test.mjs
 
       - name: Verify preserved build source
         if: inputs.existing_build_run_id != ''
@@ -161,6 +178,22 @@ jobs:
           $path = Join-Path $env:RUNNER_TEMP 'harbor-windows-installer-config.json'
           $config | ConvertTo-Json -Depth 20 | Set-Content $path
           "HARBOR_INSTALLER_CONFIG=$path" | Add-Content $env:GITHUB_ENV
+
+      - name: Check combined native Windows source
+        if: inputs.existing_build_run_id == ''
+        run: |
+          $output = [System.Collections.Generic.Queue[string]]::new()
+          & cargo check --manifest-path src-tauri/Cargo.toml --release --locked --target x86_64-pc-windows-msvc 2>&1 | ForEach-Object {
+            $line = "$_"
+            Write-Host $line
+            $output.Enqueue($line)
+            if ($output.Count -gt 60) { $null = $output.Dequeue() }
+          }
+          if ($LASTEXITCODE -ne 0) {
+            $message = ($output -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error title=Native Windows check::$message"
+            exit $LASTEXITCODE
+          }
 
       - name: Build Windows x64 NSIS installer
         run: |
@@ -230,7 +263,7 @@ jobs:
             }
           }
           New-Item -ItemType Directory -Force artifacts | Out-Null
-          $name = "Harbor_${version}_cloud-sync_no-extension-runtime_x64-setup.exe"
+          $name = "Harbor_${version}_combined-custom-fixes_no-extension-runtime_x64-setup.exe"
           Copy-Item $installer.FullName "artifacts/$name"
           $hash = (Get-FileHash "artifacts/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $name" | Set-Content artifacts/SHA256SUMS.txt
@@ -238,7 +271,8 @@ jobs:
             "Harbor $version Windows x64 installer"
             "Application source commit: $(if ($env:HARBOR_COMPILED_SOURCE) { $env:HARBOR_COMPILED_SOURCE } else { $env:GITHUB_SHA })"
             "Packaging workflow commit: $env:GITHUB_SHA"
-            'Includes the uploaded cloud-settings sync fixes.'
+            'Includes both uploaded custom branches: cloud-settings sync, Hungarian localization, preferred metadata, player/subtitle/HDR reliability, playback statistics, and settings/performance controls.'
+            'New upstream strings without Hungarian translations retain the English fallback.'
             'libmpv is reused from the checksum-verified previous installer and also checked against the official asset digest; the repository downloader pin is unchanged.'
             'Android-extension runtime is not included, matching the previous cloud-sync installer.'
             'The installer is not digitally signed. Installation and live playback are not tested by this build.'

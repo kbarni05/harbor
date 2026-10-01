@@ -3,10 +3,25 @@ import { registerEvictable } from "@/lib/maintenance";
 import { HARBOR_API_BASE } from "@/lib/config/endpoints";
 import { safeFetch } from "@/lib/safe-fetch";
 import { fetchCsmAdvisory } from "@/lib/providers/csm";
+import { parseImdbParentsGuideResponse } from "@/lib/content-advisory";
 
 const BASE = `${HARBOR_API_BASE}/api/imdb`;
+const IMDB_GRAPHQL = "https://api.graphql.imdb.com/";
 
 export type ParentalCategory = { category: string; severity: string };
+
+const IMDB_PARENTS_GUIDE_QUERY = `
+  query HarborParentsGuide($id: ID!) {
+    title(id: $id) {
+      parentsGuide {
+        categories {
+          category { text }
+          severity { text }
+        }
+      }
+    }
+  }
+`;
 
 const titleCache = new Map<string, number | null>();
 const parentalCache = new Map<string, ParentalCategory[]>();
@@ -141,6 +156,24 @@ export async function harborImdbParental(rawTt: string): Promise<ParentalCategor
     } catch {
       // Backend unavailable; fall back to Common Sense Media.
     }
+
+    try {
+      const res = await safeFetch(IMDB_GRAPHQL, {
+        method: "POST",
+        signal: AbortSignal.timeout(5000),
+        headers: { "content-type": "application/json", "x-imdb-client-name": "imdb-web-next" },
+        body: JSON.stringify({
+          operationName: "HarborParentsGuide",
+          query: IMDB_PARENTS_GUIDE_QUERY,
+          variables: { id: tt },
+        }),
+      });
+      const out = res.ok ? parseImdbParentsGuideResponse(await res.json()) : [];
+      if (out.length > 0) {
+        lruSet(parentalCache, tt, out, 200);
+        return out;
+      }
+    } catch {}
 
     try {
       const titleInfo = await resolveTitleForParental(tt);

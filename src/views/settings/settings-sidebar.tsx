@@ -1,3 +1,4 @@
+import { Star } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { HarborMark } from "@/components/icons/harbor-mark";
 import uploadGlyph from "@/assets/nav-icons/download.svg?raw";
@@ -192,6 +193,8 @@ function SectionRow({
   on: boolean;
   onPick: (id: SectionId, tab?: string) => void;
 }) {
+  const t = useT();
+  const { settings } = useSettings();
   return (
     <button
       type="button"
@@ -214,6 +217,9 @@ function SectionRow({
         )}
       </span>
       <span className="hset-rail-label">{label}</span>
+      {settings.settingsPagePreferences?.[id]?.favorite && (
+        <Star size={14} className="shrink-0 text-accent" aria-label={t("Favorite page")} />
+      )}
     </button>
   );
 }
@@ -381,38 +387,44 @@ export function SettingsSidebar({
                 className="hset-category-pages"
                 hidden={!openBands.has(band.section)}
               >
-                {band.sections.map((id) => {
-                  const tabs =
-                    (!native && (id === "mpv" || id === "shaders" || id === "plugins")) ||
-                    (id === "relay" && !settings.togetherRelayUrl)
-                      ? []
-                      : tabsFor(id).filter(
-                          (tab) => native || id !== "theme" || tab.id !== "window",
-                        );
-                  return (
-                    <div key={id} className="hset-rail-page-group">
-                      {tabs.length > 0 ? (
-                        tabs.map((tab) => (
+                {[...band.sections]
+                  .sort(
+                    (a, b) =>
+                      Number(settings.settingsPagePreferences?.[b]?.favorite === true) -
+                      Number(settings.settingsPagePreferences?.[a]?.favorite === true),
+                  )
+                  .map((id) => {
+                    const tabs =
+                      (!native && (id === "mpv" || id === "shaders" || id === "plugins")) ||
+                      (id === "relay" && !settings.togetherRelayUrl)
+                        ? []
+                        : tabsFor(id).filter(
+                            (tab) => native || id !== "theme" || tab.id !== "window",
+                          );
+                    return (
+                      <div key={id} className="hset-rail-page-group">
+                        {tabs.length > 0 ? (
+                          tabs.map((tab) => (
+                            <SectionRow
+                              key={tab.id}
+                              id={id}
+                              tab={tab}
+                              label={t(PAGE_LABELS[id + "." + tab.id] ?? tab.label)}
+                              on={id === active && (activeTab ?? tabs[0].id) === tab.id}
+                              onPick={onSelect}
+                            />
+                          ))
+                        ) : (
                           <SectionRow
-                            key={tab.id}
                             id={id}
-                            tab={tab}
-                            label={t(PAGE_LABELS[id + "." + tab.id] ?? tab.label)}
-                            on={id === active && (activeTab ?? tabs[0].id) === tab.id}
+                            label={t(meta[id].label)}
+                            on={id === active}
                             onPick={onSelect}
                           />
-                        ))
-                      ) : (
-                        <SectionRow
-                          id={id}
-                          label={t(meta[id].label)}
-                          on={id === active}
-                          onPick={onSelect}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
+                        )}
+                      </div>
+                    );
+                  })}
               </div>
             </div>
           );

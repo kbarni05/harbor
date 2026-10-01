@@ -10,9 +10,12 @@ import { buildSubtitleTimingMediaKey } from "@/lib/player/subtitle-fps";
 import {
   hdrOverlayEmitAction,
   onHdrStageProps,
+  onHdrStageClock,
   type HdrNavigationRequest,
 } from "@/lib/hdr-overlay";
 import { PlayerNavigationProvider, type PlayerNavigation, type PlayerSrc } from "@/lib/view";
+import { XrayOverlay } from "@/components/player/xray/xray-overlay";
+import { setPlaybackClock } from "@/lib/player/playback-clock";
 import { PlayerInteractionLockControls } from "@/components/player/player-interaction-lock";
 import { usePlayerInteractionBlocker } from "./player/hooks/use-player-interaction-lock";
 
@@ -177,6 +180,15 @@ function HdrOverlayChrome() {
   }, [payload?.stageId]);
 
   useEffect(() => {
+    const un = onHdrStageClock(({ positionSec, bufferedSec }) =>
+      setPlaybackClock(positionSec, bufferedSec),
+    );
+    return () => {
+      void un.then((fn) => fn()).catch(() => {});
+    };
+  }, []);
+
+  useEffect(() => {
     let last = 0;
     const onMove = () => {
       const now = performance.now();
@@ -258,6 +270,14 @@ function HdrOverlayChrome() {
         download={download}
         sleep={undefined}
       />
+      {!payload.pipMode && (
+        <XrayOverlay
+          meta={src.meta}
+          visible={payload.visible}
+          isPaused={snap.status === "paused"}
+          bridgeRef={bridgeRef}
+        />
+      )}
       <PlayerInteractionLockControls
         enabled={payload.screenLockEnabled}
         locked={payload.screenLocked}

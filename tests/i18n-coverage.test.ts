@@ -18,6 +18,7 @@ import koCoverage from "../src/lib/i18n/locales/ko/coverage.ts";
 import plCoverage from "../src/lib/i18n/locales/pl/coverage.ts";
 import ptCoverage from "../src/lib/i18n/locales/pt/coverage.ts";
 import ruCoverage from "../src/lib/i18n/locales/ru/coverage.ts";
+import huCoverage from "../src/lib/i18n/locales/hu/coverage.ts";
 import trCoverage from "../src/lib/i18n/locales/tr/coverage.ts";
 import viCoverage from "../src/lib/i18n/locales/vi/coverage.ts";
 import zhCoverage from "../src/lib/i18n/locales/zh/coverage.ts";
@@ -28,6 +29,7 @@ const LANGS = [
   "de",
   "es",
   "fr",
+  "hu",
   "hi",
   "id",
   "it",
@@ -47,6 +49,7 @@ const COVERAGE = {
   de: deCoverage,
   es: esCoverage,
   fr: frCoverage,
+  hu: huCoverage,
   hi: hiCoverage,
   id: idCoverage,
   it: itCoverage,

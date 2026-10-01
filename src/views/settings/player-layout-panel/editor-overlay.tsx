@@ -28,8 +28,7 @@ import { ProfilePicker } from "./profile-picker";
 import { usePreviewBackdrop } from "./use-preview-backdrop";
 import { stripArrowKeys } from "../shared";
 
-const OVERLAY_LABEL =
-  "text-[13px] font-extrabold uppercase leading-[17px] tracking-[0.72px]";
+const OVERLAY_LABEL = "text-[13px] font-extrabold uppercase leading-[17px] tracking-[0.72px]";
 
 type Props = {
   theme: ThemeId;
@@ -254,6 +253,7 @@ export function EditorOverlay({
   return createPortal(
     <div
       ref={rootRef}
+      data-settings-root
       role="dialog"
       aria-modal="true"
       className="fixed inset-0 z-[300] flex flex-col bg-black text-white"

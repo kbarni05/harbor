@@ -1,7 +1,25 @@
-const coverage: Record<string, string> = {
+const coverage: Record<string, string> = {
+  "Favorite page": "Избранная страница",
+  "This Settings page": "Настройки этой страницы",
+  "These preferences apply only to the page you are viewing.":
+    "Эти параметры применяются только к просматриваемой странице.",
+  "Keep at the top of its menu group": "В начало группы меню",
+  "Marks this page with a star and moves it before the other pages in the same group.":
+    "Отмечает эту страницу звездой и перемещает её перед остальными страницами той же группы.",
+  "Compact page spacing": "Компактные отступы страницы",
+  "Fits more settings on screen by reducing card spacing without changing any feature.":
+    "Умещает больше настроек на экране, уменьшая отступы карточек без изменения функций.",
+  "Show page introduction": "Показывать описание страницы",
+  "Shows the short explanation below this page's title.":
+    "Показывает краткое пояснение под заголовком этой страницы.",
+  "Automatic HDR / Dolby Vision": "Автоматический HDR / Dolby Vision",
+  "Uses the active display's Windows HDR calibration. Dolby Vision is reshaped by libplacebo and output as display-matched HDR/PQ; SDR displays are handled automatically.":
+    "Использует HDR-калибровку Windows для активного дисплея. libplacebo преобразует Dolby Vision и выводит согласованный с дисплеем HDR/PQ; SDR-дисплеи обрабатываются автоматически.",
+
   "Sound descriptions": "Описания звуков",
   "Hide sound effects and speaker names": "Скрывать звуковые эффекты и имена говорящих",
-  "Removes bracketed descriptions like [door creaks] and shouted speaker labels like JOHN: while subtitles play, so a release that only ships an SDH track still reads as plain dialogue. Song lyrics, ordinary parentheses and non-Latin scripts are left alone. Skipped on forced and picture-based tracks.": "Убирает из идущих субтитров описания в квадратных скобках вроде [скрип двери] и имена говорящих заглавными латинскими буквами вроде JOHN:, чтобы релиз, в котором есть только дорожка SDH, читался как обычный диалог. Тексты песен, обычные круглые скобки и нелатинские алфавиты остаются нетронутыми. Не применяется к форсированным и графическим дорожкам.",
+  "Removes bracketed descriptions like [door creaks] and shouted speaker labels like JOHN: while subtitles play, so a release that only ships an SDH track still reads as plain dialogue. Song lyrics, ordinary parentheses and non-Latin scripts are left alone. Skipped on forced and picture-based tracks.":
+    "Убирает из идущих субтитров описания в квадратных скобках вроде [скрип двери] и имена говорящих заглавными латинскими буквами вроде JOHN:, чтобы релиз, в котором есть только дорожка SDH, читался как обычный диалог. Тексты песен, обычные круглые скобки и нелатинские алфавиты остаются нетронутыми. Не применяется к форсированным и графическим дорожкам.",
   "Play from": "Играть с",
   end: "конец",
   "m:ss": "м:сс",

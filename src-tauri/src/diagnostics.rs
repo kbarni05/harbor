@@ -31,8 +31,8 @@ pub struct CollectResult {
 }
 
 struct ScrubRules {
-    bearer: Regex,
     authorization: Regex,
+    bearer: Regex,
     storage_key: Regex,
     key_value: Regex,
     email: Regex,
@@ -46,11 +46,11 @@ struct ScrubRules {
 fn rules() -> &'static ScrubRules {
     static RULES: OnceLock<ScrubRules> = OnceLock::new();
     RULES.get_or_init(|| ScrubRules {
-        bearer: Regex::new(r"(?i)bearer\s+[A-Za-z0-9._~+/=\-]{8,}").unwrap(),
         authorization: Regex::new(
-            r#"(?i)(authorization"?\s*[:=]\s*"?)(bearer\s+|basic\s+)?([^"'\s,;&}\)]+)"#,
+            r#"(?i)(authorization)("?\s*[:=]\s*"?)(?:(bearer|basic)\s+)?([^"'\s,;&}\)]+)"#,
         )
         .unwrap(),
+        bearer: Regex::new(r"(?i)bearer\s+[A-Za-z0-9._~+/=\-]{8,}").unwrap(),
         storage_key: Regex::new(
             r#"(?i)(harbor\.(?:theme-session|session\.token|auth(?:\.[A-Za-z0-9_.-]+)?))("?\s*[:=]\s*"?)([^"'\s,;&}\)]+)"#,
         )
@@ -71,12 +71,16 @@ fn rules() -> &'static ScrubRules {
 
 pub fn diagnostics_scrub(text: &str) -> String {
     let r = rules();
-    let step1 = r
-        .bearer
-        .replace_all(text, |_: &regex::Captures| format!("Bearer {REDACTED}"));
-    let step2 = r.authorization.replace_all(&step1, |c: &regex::Captures| {
-        format!("{}{}{}", &c[1], &c[2], REDACTED)
+    let step1 = r.authorization.replace_all(text, |c: &regex::Captures| {
+        let scheme = c
+            .get(3)
+            .map(|value| format!("{} ", value.as_str()))
+            .unwrap_or_default();
+        format!("{}{}{}{}", &c[1], &c[2], scheme, REDACTED)
     });
+    let step2 = r
+        .bearer
+        .replace_all(&step1, |_: &regex::Captures| format!("Bearer {REDACTED}"));
     let step3 = r.storage_key.replace_all(&step2, |c: &regex::Captures| {
         format!("{}{}{}", &c[1], &c[2], REDACTED)
     });

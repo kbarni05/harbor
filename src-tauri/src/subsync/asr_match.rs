@@ -45,7 +45,10 @@ fn fold(c: char) -> char {
 }
 
 fn phonetic(n: &str) -> String {
-    let canonical = n.replace("ght", "t");
+    // Fold the common silent "gh" in -ight words before the coarse consonant
+    // mapping, so ASR spellings such as "night" and "nite" can agree without
+    // treating an initial pronounced g (for example "ghost") as silent.
+    let canonical = n.replace("igh", "i").replace("ght", "t");
     let mut out = String::new();
     let mut prev = '\u{0}';
     for (i, c) in canonical.chars().enumerate() {

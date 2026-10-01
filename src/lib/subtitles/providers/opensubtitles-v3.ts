@@ -1,18 +1,18 @@
 import { dinfo, dwarn } from "@/lib/debug";
 import { safeFetch } from "@/lib/safe-fetch";
 import type { SubResult, SubSearchQuery } from "../types";
-import { normalizeLang } from "../language";
 import {
   classifyProviderSubtitleMetadata,
   type ProviderSubtitleFlags,
 } from "../provider-classification";
+import { normalizeSubtitleLang } from "../language";
 
 const ENDPOINTS = ["https://opensubtitles-v3.strem.io"];
 
 type RawSub = ProviderSubtitleFlags & {
   id?: string;
   url: string;
-  lang: string;
+  lang?: string | null;
   m?: string;
   SubFormat?: string;
   fps?: number;
@@ -63,7 +63,7 @@ export async function searchOpenSubtitlesV3(q: SubSearchQuery): Promise<SubResul
   for (const list of results) {
     for (const s of list) {
       if (!s.url) continue;
-      const key = `${s.lang}|${s.url}`;
+      const key = `${normalizeSubtitleLang(s.lang)}|${s.url}`;
       if (seen.has(key)) continue;
       seen.add(key);
       merged.push(s);
@@ -71,7 +71,7 @@ export async function searchOpenSubtitlesV3(q: SubSearchQuery): Promise<SubResul
   }
   const perLang = new Map<string, number>();
   return merged.map((s) => {
-    const lang = normalizeLang(s.lang);
+    const lang = normalizeSubtitleLang(s.lang);
     const n = (perLang.get(lang) ?? 0) + 1;
     perLang.set(lang, n);
     const classification = classifyProviderSubtitleMetadata(s, [s.m, s.id, s.url]);

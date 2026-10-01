@@ -4,6 +4,8 @@ import type { Meta } from "@/lib/cinemeta";
 import { Poster, usePosterChain } from "@/components/poster";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
+import { mergePreferredMeta } from "@/lib/preferred-meta";
+import { usePreferredMeta } from "@/lib/use-preferred-meta";
 
 export const TMDB_PAGE_SIZE = 20;
 export const MAX_PAGE = 12;
@@ -120,6 +122,8 @@ export function MobileCatalogGrid({
 function GridPoster({ meta, onOpen }: { meta: Meta; onOpen: (m: Meta) => void }) {
   const t = useT();
   const { settings } = useSettings();
+  const preferredMeta = usePreferredMeta(meta);
+  const displayMeta = mergePreferredMeta(meta, preferredMeta);
   const { src, onError } = usePosterChain(
     settings.rpdbKey,
     meta.id,
@@ -129,8 +133,8 @@ function GridPoster({ meta, onOpen }: { meta: Meta; onOpen: (m: Meta) => void })
   return (
     <button
       type="button"
-      onClick={() => onOpen(meta)}
-      aria-label={t("View {title}", { title: meta.name })}
+      onClick={() => onOpen(displayMeta)}
+      aria-label={t("View {title}", { title: displayMeta.name })}
       className="text-start transition-transform duration-150 active:scale-[0.96]"
     >
       <Poster
@@ -149,7 +153,7 @@ function GridPoster({ meta, onOpen }: { meta: Meta; onOpen: (m: Meta) => void })
         )}
       </Poster>
       <p className="mt-1.5 line-clamp-2 text-[12px] font-medium leading-snug text-ink-muted">
-        {meta.name}
+        {displayMeta.name}
       </p>
     </button>
   );

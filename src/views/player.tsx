@@ -4,7 +4,7 @@ import { EmbeddedBroadcastPlayer } from "./sports/embedded-broadcast-player";
 import { resolveChromeTheme } from "@/lib/theme";
 import { useBigPicture } from "@/lib/big-picture";
 import { useActiveKid } from "@/lib/profiles";
-import { type PlayerBridge } from "@/lib/player/bridge";
+import { type PlayerBridge, type PlayerSnapshot } from "@/lib/player/bridge";
 import { useDebridClients } from "@/lib/debrid/registry";
 import { useSettings } from "@/lib/settings";
 import { writePlayerVolume } from "@/lib/player-volume";
@@ -96,6 +96,7 @@ import { StillWatchingPrompt } from "./player/still-watching-prompt";
 import { SourceErrorCard } from "./player/source-error-card";
 import { LeaveConfirmModal } from "@/components/player/leave-confirm-modal";
 import { HdrStageBridge } from "./player/hdr-stage-bridge";
+import type { HdrStagePayload } from "./hdr-overlay-app";
 import { setSkipSegmentsView } from "@/lib/skip-intro/segment-store";
 import { markStreamDead, STUB_TTL_MS } from "@/lib/dead-streams";
 import type { VolumeIndicatorState } from "@/components/player/volume-indicator";
@@ -111,6 +112,30 @@ import { isNextAired } from "@/lib/cw-resurface";
 import { exitAnyFullscreen } from "@/lib/fullscreen-state";
 
 let hdrFallbackNoticeShown = false;
+
+function useHdrChromeSnapshot(snap: PlayerSnapshot): PlayerSnapshot {
+  const candidate = useMemo(
+    () => ({
+      ...snap,
+      // These high-frequency fields are either read from the playback clock
+      // by the transport or rendered natively by mpv in embedded HDR mode.
+      // Keeping them out of the cross-window payload prevents every subtitle
+      // cue from repainting a full-screen transparent WebView over 4K video.
+      positionSec: 0,
+      bufferedSec: 0,
+      subText: "",
+      subStartSec: 0,
+      secondarySubText: "",
+    }),
+    [snap],
+  );
+  const stableRef = useRef(candidate);
+  const keys = Object.keys(candidate) as Array<keyof PlayerSnapshot>;
+  if (keys.some((key) => stableRef.current[key] !== candidate[key])) {
+    stableRef.current = candidate;
+  }
+  return stableRef.current;
+}
 
 export function PlayerView({ src }: { src: PlayerSrc }) {
   return src.officialBroadcast ? (
@@ -188,12 +213,13 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
   const bridgeRef = useRef<PlayerBridge | null>(null);
   const selfFrameReadyRef = useRef(false);
   const { fullscreen, toggleFullscreen } = useFullscreen();
-  const { snap, engine, bridgeReady, bridgeKey, embedActive, svpActive } = usePlayerBridge({
-    bridgeRef,
-    videoMountRef,
-    src,
-    settings,
-  });
+  const { snap, engine, bridgeReady, bridgeKey, embedActive, svpActive, hdrToSdr } =
+    usePlayerBridge({
+      bridgeRef,
+      videoMountRef,
+      src,
+      settings,
+    });
   const nativeDock = docked && engine === "mpv" && embedActive;
   useSportsDockSurface(nativeDock && !dockMinimized, videoMountRef);
   const isP2pEngine =
@@ -767,8 +793,10 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
   }, [showSyncToast, t]);
   const handleEnterSync = useCallback(() => {
     suspendAutoSyncForManualTiming();
-    void textSync.enter(src.url, src.headers);
-  }, [textSync.enter, src.url, src.headers, suspendAutoSyncForManualTiming]);
+    void textSync.enter(src.url, src.headers).then((reason) => {
+      if (reason) showSyncToast("error", t("Could not open Live Sync: {reason}", { reason }));
+    });
+  }, [textSync.enter, src.url, src.headers, suspendAutoSyncForManualTiming, showSyncToast, t]);
 
   const volumeIndicatorTimerRef = useRef<number | null>(null);
   const [volumeIndicator, setVolumeIndicator] = useState<VolumeIndicatorState>({
@@ -1198,7 +1226,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     embedActive,
     hdrGamma: snap.hdrGamma,
     playerHdrStage: docked ? "off" : settings.playerHdrStage,
-    playerHdrToSdr: settings.playerHdrToSdr,
+    playerHdrToSdr: hdrToSdr,
     onFallback: () => {
       if (hdrFallbackNoticeShown) return;
       hdrFallbackNoticeShown = true;
@@ -1243,6 +1271,45 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
       : snap;
   if (showChrome) shellSnapRef.current = liveShellSnap;
   const shellSnap = showChrome ? liveShellSnap : shellSnapRef.current;
+  const hdrChromeSnap = useHdrChromeSnapshot(snap);
+  const hdrStagePayload = useMemo<HdrStagePayload>(
+    () => ({
+      snap: hdrChromeSnap,
+      src,
+      shellId: settings.playerShellId,
+      engine,
+      visible: showChrome,
+      fullscreen,
+      resolvedImdbId,
+      tmdbKey: settings.tmdbKey ?? null,
+      canChangeEpisode,
+      hasPrevEp: hasPrevEpisodeNow,
+      hasNextEp: hasNextEpisodeNow,
+      pipMode,
+      screenLocked,
+      screenLockEnabled,
+      screenLockControlsVisible,
+      screenLockBinding,
+    }),
+    [
+      hdrChromeSnap,
+      src,
+      settings.playerShellId,
+      settings.tmdbKey,
+      engine,
+      showChrome,
+      fullscreen,
+      resolvedImdbId,
+      canChangeEpisode,
+      hasPrevEpisodeNow,
+      hasNextEpisodeNow,
+      pipMode,
+      screenLocked,
+      screenLockEnabled,
+      screenLockControlsVisible,
+      screenLockBinding,
+    ],
+  );
   const volumeRef = useRef(snap.volume);
   useEffect(() => {
     volumeRef.current = snap.volume;
@@ -1592,24 +1659,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
       {!tenFoot && <LeaveConfirmModal />}
       <HdrStageBridge
         active={hdrStageRequested}
-        payload={{
-          snap,
-          src,
-          shellId: settings.playerShellId,
-          engine,
-          visible: showChrome,
-          fullscreen,
-          resolvedImdbId,
-          tmdbKey: settings.tmdbKey ?? null,
-          canChangeEpisode,
-          hasPrevEp: hasPrevEpisodeNow,
-          hasNextEp: hasNextEpisodeNow,
-          pipMode,
-          screenLocked,
-          screenLockEnabled,
-          screenLockControlsVisible,
-          screenLockBinding,
-        }}
+        payload={hdrStagePayload}
         handlers={{
           playPause: playPauseToggle,
           fullscreen: toggleFullscreen,

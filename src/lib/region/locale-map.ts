@@ -123,6 +123,17 @@ export function localeForRegion(region: string): LocaleProfile {
       greetingKey: null,
     };
   }
+  if (r === "HU") {
+    return {
+      uiLanguage: "hu",
+      tmdbLanguage: "hu-HU",
+      contentLanguage: "hu",
+      subtitleLanguage: "Hungarian",
+      audioLanguage: "Hungarian",
+      rtl: false,
+      greetingKey: null,
+    };
+  }
   if (LUSOPHONE_REGIONS.has(r)) {
     return {
       uiLanguage: "pt",

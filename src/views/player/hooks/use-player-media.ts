@@ -42,6 +42,7 @@ import { useVideoDownload } from "./use-video-download";
 import { useWebviewMemory } from "./use-webview-memory";
 import { useCaptionsPopoutOpen } from "@/lib/player/captions-popout-state";
 import { sdhSafeForLanguage } from "@/lib/subtitles/sdh-filter";
+import { effectiveHdrToSdr } from "@/lib/player/hdr-output-policy";
 
 const HDR_NATIVE_GAMMAS = new Set(["pq", "hlg"]);
 
@@ -198,10 +199,11 @@ export function usePlayerMedia(params: {
   }, [asStatus, asOffer, asApply, asRevert, asRetry, asRun, asStop, asFeedback]);
 
   const subEmbed = engine === "mpv" && settings.playerMpvEmbed;
+  const hdrToSdr = effectiveHdrToSdr(settings);
   const hdrNativeSurface =
     engine === "mpv" &&
     isWindowsDesktop() &&
-    !settings.playerHdrToSdr &&
+    !hdrToSdr &&
     HDR_NATIVE_GAMMAS.has(snap.hdrGamma) &&
     (settings.playerHdrOpaqueWindow ||
       (settings.playerMpvEmbed && settings.playerHdrStage !== "off"));

@@ -1,5 +1,14 @@
 import { memo, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Check, ChevronRight, Info, Plus, RotateCcw, TrendingUp, Volume2, VolumeX } from "lucide-react";
+import {
+  Check,
+  ChevronRight,
+  Info,
+  Plus,
+  RotateCcw,
+  TrendingUp,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { Play } from "@/components/icons/play-filled";
 import { ImdbIcon } from "@/components/icons/imdb-icon";
 import tmdbIcon from "@/assets/addon-logos/tmdb.png";
@@ -26,6 +35,8 @@ import { peekCachedLogo, resolveLogo } from "@/lib/logo";
 import { useSettings } from "@/lib/settings";
 import { useTitleLogo } from "@/lib/title-logo";
 import { useLocalizedOverview } from "@/lib/use-localized-overview";
+import { mergePreferredMeta } from "@/lib/preferred-meta";
+import { usePreferredMeta } from "@/lib/use-preferred-meta";
 import { fetchTrailer, prefetchTrailer, trailerSrc, type TrailerInfo } from "@/lib/trailer";
 import { useView } from "@/lib/view";
 import { useProfiles } from "@/lib/profiles";
@@ -71,6 +82,8 @@ export const Hero = memo(function Hero({
   const { pickerOpen: profilePickerOpen } = useProfiles();
   const t = useT();
   const description = useLocalizedOverview(meta);
+  const preferredMeta = usePreferredMeta(meta, active);
+  const displayMeta = mergePreferredMeta(meta, preferredMeta);
   const resolvedImdb = useTmdbImdbId(meta.id);
   const inWatchlist = useInWatchlist(meta.id, [resolvedImdb]);
   const [bgUrl, setBgUrl] = useState<string | undefined>(meta.background);
@@ -99,7 +112,11 @@ export const Hero = memo(function Hero({
   const onScreen = pageVisible && !overlayed && visibleRatio > 0.12;
   const wantsPlayback =
     !!playTrailer && !!trailerInfo && !overControls && onScreen && lingered && !ended;
-  const { slot, video: videoRef, ready: videoReady } = useTrailerVideo({
+  const {
+    slot,
+    video: videoRef,
+    ready: videoReady,
+  } = useTrailerVideo({
     src: trailerInfo ? trailerSrc(trailerInfo) : null,
     active: !!playTrailer && !!trailerInfo && onScreen,
     className: HERO_VIDEO_CLASS,
@@ -359,10 +376,7 @@ export const Hero = memo(function Hero({
                   </div>
                   <div className="flex flex-col gap-0.5">
                     {rank.sources.map((s) => (
-                      <div
-                        key={s.label}
-                        className="flex items-center justify-between gap-4 py-1.5"
-                      >
+                      <div key={s.label} className="flex items-center justify-between gap-4 py-1.5">
                         <span className="inline-flex items-center gap-2 text-[12.5px] font-medium text-ink">
                           {SOURCE_ICON[s.label] && (
                             <img
@@ -388,7 +402,7 @@ export const Hero = memo(function Hero({
             </div>
           )}
           <HeroTitlePlate
-            name={meta.name}
+            name={displayMeta.name}
             logo={logo}
             loaded={logoLoaded}
             resolved={logoResolved}

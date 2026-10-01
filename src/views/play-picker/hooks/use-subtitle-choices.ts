@@ -89,7 +89,9 @@ export function useSubtitleChoices(src: PlayerSrc) {
               : imdbEpAligned
                 ? (src.episode?.imdbEpisode ?? src.episode?.episode)
                 : src.episode?.episode,
-            langs: preferredLangs,
+            // This screen is a picker, so request every available language.
+            // Preferences are still used below to rank and preselect safely.
+            langs: [],
             filename: subtitleStreamDescriptor(src.streamRef),
           },
           {

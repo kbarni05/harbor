@@ -116,44 +116,55 @@ export function useTextSync(
     constant,
   ]);
 
-  const enter = useCallback(async (sourceUrl: string | null, headers?: Record<string, string>) => {
-    const b = bridgeRef.current;
-    if (!b) return;
-    const session = ++sessionGeneration.current;
-    previewGeneration.current += 1;
-    previewSelected.current = false;
-    let baseOffset = 0;
-    let sourceTrack: TrackInfo | null = null;
-    const unsub = b.subscribe((s) => {
-      baseOffset = s.subDelaySec;
-      sourceTrack = s.subtitleTracks.find((track) => track.selected) ?? null;
-    });
-    unsub();
-    setState({ ...INITIAL, syncMode: "loading", baseOffset, sourceTrack });
-    const res = await getCuesAnySource(b, sourceUrl, headers);
-    if (session !== sessionGeneration.current || b !== bridgeRef.current) return;
-    if (!res.ok) {
-      setState({ ...INITIAL, syncMode: "active", baseOffset, sourceTrack, error: res.reason });
-      return;
-    }
-    let selectedId: string | null = null;
-    b.subscribe((s) => {
-      selectedId = s.subtitleTracks.find((track) => track.selected)?.id ?? null;
-    })();
-    if (selectedId !== (sourceTrack as TrackInfo | null)?.id) {
-      setState(INITIAL);
-      return;
-    }
-    setState({
-      ...INITIAL,
-      syncMode: "active",
-      cues: res.source.cues,
-      baseOffset,
-      nudge: baseOffset,
-      sourceFormat: res.source.format,
-      sourceTrack,
-    });
-  }, []);
+  const enter = useCallback(
+    async (sourceUrl: string | null, headers?: Record<string, string>): Promise<string | null> => {
+      const b = bridgeRef.current;
+      if (!b) return "player-unavailable";
+      const session = ++sessionGeneration.current;
+      previewGeneration.current += 1;
+      previewSelected.current = false;
+      let baseOffset = 0;
+      let sourceTrack: TrackInfo | null = null;
+      const unsub = b.subscribe((s) => {
+        baseOffset = s.subDelaySec;
+        sourceTrack = s.subtitleTracks.find((track) => track.selected) ?? null;
+      });
+      unsub();
+      setState({ ...INITIAL, syncMode: "loading", baseOffset, sourceTrack });
+      try {
+        const res = await getCuesAnySource(b, sourceUrl, headers);
+        if (session !== sessionGeneration.current || b !== bridgeRef.current) return null;
+        if (!res.ok) {
+          setState({ ...INITIAL, syncMode: "active", baseOffset, sourceTrack, error: res.reason });
+          return res.reason;
+        }
+        let selectedId: string | null = null;
+        b.subscribe((s) => {
+          selectedId = s.subtitleTracks.find((track) => track.selected)?.id ?? null;
+        })();
+        if (selectedId !== (sourceTrack as TrackInfo | null)?.id) {
+          setState(INITIAL);
+          return null;
+        }
+        setState({
+          ...INITIAL,
+          syncMode: "active",
+          cues: res.source.cues,
+          baseOffset,
+          nudge: baseOffset,
+          sourceFormat: res.source.format,
+          sourceTrack,
+        });
+        return null;
+      } catch (e) {
+        if (session !== sessionGeneration.current || b !== bridgeRef.current) return null;
+        const reason = e instanceof Error ? e.message : "subtitle-read-failed";
+        setState({ ...INITIAL, syncMode: "active", error: reason });
+        return reason;
+      }
+    },
+    [],
+  );
 
   const syncFromHere = useCallback((cueIndex: number) => {
     setState((prev) => {

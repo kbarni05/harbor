@@ -142,7 +142,9 @@ test("all library groupings retain virtualization and local removal wiring", () 
     assert.match(grid, /scrollRef=\{scrollRef\}/);
   }
   const shared = read("src/views/library/shared.tsx");
-  assert.equal((shared.match(/\(\) => onRemoveLocal\(it.localId as string\)/g) ?? []).length, 2);
+  assert.match(shared, /onRemoveLocal\(it.localId!/);
+  assert.match(shared, /<VirtualGrid[\s\S]*onRemove=\{remove\(it\)\}/);
+  assert.match(shared, /shown.map[\s\S]*onRemove=\{remove\(it\)\}/);
 });
 
 test("anime search fallback retains animation, full-name and exact-year guards", () => {

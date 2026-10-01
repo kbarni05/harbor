@@ -9,6 +9,7 @@ import { useT } from "@/lib/i18n";
 import { openUrl } from "@/lib/window";
 import { RowNote, Segmented, ToggleRow } from "../shared";
 import { Nested, ROW_ACTION, ROW_ACTION_PRIMARY, SettingRow } from "../kit";
+import { effectiveHdrToSdr } from "@/lib/player/hdr-output-policy";
 import { BeforeAfter } from "./before-after";
 import { appliesLabel, segmentedWide, TIER_LOAD } from "./stages";
 import amdLogo from "@/assets/shader-logos/amd.svg?url";
@@ -76,7 +77,7 @@ export function ShaderCard({ entry }: { entry: ShaderCatalogEntry }) {
   }, [installed]);
 
   const lockReason = entry.conflictsWith?.some((c) =>
-    c === "hdrToSdr" ? settings.playerHdrToSdr : c === "rtxHdr" ? settings.playerRtxHdr : false,
+    c === "hdrToSdr" ? effectiveHdrToSdr(settings) : c === "rtxHdr" ? settings.playerRtxHdr : false,
   )
     ? t(
         "Harbor's built-in HDR to SDR conversion is on. Turn it off in Video tuning to use this instead. Running both double-processes the picture.",
@@ -231,7 +232,9 @@ export function ShaderCard({ entry }: { entry: ShaderCatalogEntry }) {
           className="flex min-h-11 w-fit items-center gap-2 text-start text-[14px] text-ink-muted hover:text-ink"
           onClick={() => openUrl(entry.source.url)}
         >
-          <span>{t("Source")}: {entry.source.label}</span>
+          <span>
+            {t("Source")}: {entry.source.label}
+          </span>
           <ExternalLink size={15} className="shrink-0" />
         </button>
       </Nested>

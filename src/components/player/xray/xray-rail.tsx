@@ -9,6 +9,7 @@ type Props = {
   galleryReady: boolean;
   progress: { done: number; total: number };
   error: string | null;
+  liveScan: boolean;
   needsTmdbKey?: boolean;
   onOpenPerson: (person: XrayPerson) => void;
   onViewAll: () => void;
@@ -22,6 +23,7 @@ export function XrayRail({
   galleryReady,
   progress,
   error,
+  liveScan,
   needsTmdbKey,
   onViewAll,
   onOpenPerson,
@@ -29,25 +31,29 @@ export function XrayRail({
 }: Props) {
   const t = useT();
 
-  const emptyGallery = galleryReady && progress.total === 0;
-  const canMatch = !error && !emptyGallery;
+  const emptyGallery = liveScan && galleryReady && progress.total === 0;
+  const canMatch = liveScan && !error && !emptyGallery;
   const fallback = people.length === 0 && !canMatch && (castPeople?.length ?? 0) > 0;
   const list = people.length > 0 ? people : fallback ? (castPeople ?? []) : [];
-  const status = error
-    ? `${t("X-Ray unavailable")} — ${error}`
-    : !ready
-      ? t("Warming up")
-      : !galleryReady
-        ? progress.total > 0
-          ? `${t("Reading the cast")} ${progress.done}/${progress.total}`
-          : t("Reading the cast")
-        : emptyGallery
-          ? needsTmdbKey
-            ? t("Add a TMDB key in Settings to identify the cast.")
-            : t("No cast photos are available for this title.")
-          : people.length === 0
-            ? t("Looking for who is on screen")
-            : null;
+  const status = !liveScan
+    ? list.length === 0
+      ? t("Reading the cast")
+      : null
+    : error
+      ? `${t("X-Ray unavailable")} — ${error}`
+      : !ready
+        ? t("Warming up")
+        : !galleryReady
+          ? progress.total > 0
+            ? `${t("Reading the cast")} ${progress.done}/${progress.total}`
+            : t("Reading the cast")
+          : emptyGallery
+            ? needsTmdbKey
+              ? t("Add a TMDB key in Settings to identify the cast.")
+              : t("No cast photos are available for this title.")
+            : people.length === 0
+              ? t("Looking for who is on screen")
+              : null;
 
   return (
     <div className="pointer-events-auto absolute left-0 top-24 z-40 max-h-[68%] w-[300px] animate-xray-rail-in motion-reduce:animate-none">

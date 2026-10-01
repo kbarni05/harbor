@@ -102,6 +102,11 @@ export type MusicSpeedPreset = {
   reverb: number;
   keepPitch: boolean;
 };
+export type SettingsPagePreference = {
+  favorite?: boolean;
+  compact?: boolean;
+  showIntro?: boolean;
+};
 
 export type Settings = {
   soundTheme: "none" | "glass" | "modern" | "retro" | "cinematic";
@@ -176,6 +181,7 @@ export type Settings = {
   playerTitleScale: number;
   playerTitleSeriesFirst: boolean;
   uiScale: number;
+  settingsPagePreferences: Record<string, SettingsPagePreference>;
   serveWebUi: boolean;
   remoteControlEnabled: boolean;
   controllerSupportEnabled: boolean;
@@ -190,6 +196,8 @@ export type Settings = {
   controllerKeyboardSize: number;
   controllerRepeatMs: number;
   controllerInitialDelayMs: number;
+  preloadViews: boolean;
+  backgroundNetworkActivity: boolean;
   trailerQuality: "auto" | "360p" | "720p" | "1080p" | "best";
   detailTrailerAutoplay: boolean;
   heroBackdropCarousel: boolean;
@@ -290,6 +298,7 @@ export type Settings = {
   seasonSourceLock: boolean;
   rememberLastStream: boolean;
   keepSourceNextEpisode: boolean;
+  playerHdrAuto: boolean;
   playerHdrToSdr: boolean;
   playerRtxHdr: boolean;
   playerRtxVsr: boolean;

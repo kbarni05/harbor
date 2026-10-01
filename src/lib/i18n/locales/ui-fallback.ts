@@ -1,5 +1,51 @@
 // Newly introduced UI copy remains usable until each locale provides an override.
 const uiFallback: Record<string, string> = {
+  "Could not open Live Sync: {reason}": "Could not open Live Sync: {reason}",
+  "Dropped frames": "Dropped frames",
+  "A/V sync": "A/V sync",
+  "Current A/V bitrate": "Current A/V bitrate",
+  "Average A/V bitrate": "Average A/V bitrate",
+  "Source colour": "Source colour",
+  "HDR metadata": "HDR metadata",
+  "Display target": "Display target",
+  "Audio channels": "Audio channels",
+  "Cache ahead": "Cache ahead",
+  "Download speed": "Download speed",
+  "Cached data": "Cached data",
+  "Video output": "Video output",
+  Viewport: "Viewport",
+  Video: "Video",
+  "Audio & subtitles": "Audio & subtitles",
+  "Streaming & renderer": "Streaming & renderer",
+  Claim: "Claim",
+  "Show {n} more": "Show {n} more",
+  "Performance & resource use": "Performance & resource use",
+  "Choose whether Harbor favours the lightest idle footprint or warms up common pages and keeps optional automation active while hidden.":
+    "Choose whether Harbor favours the lightest idle footprint or warms up common pages and keeps optional automation active while hidden.",
+  "Warm up common pages after launch": "Warm up common pages after launch",
+  "Preloads the player, source picker, details, and Settings when the app is idle. Leave this off for lower startup memory and battery use.":
+    "Preloads the player, source picker, details, and Settings when the app is idle. Leave this off for lower startup memory and battery use.",
+  "Allow optional background checks": "Allow optional background checks",
+  "Lets scheduled downloads and release webhooks check for updates while Harbor is hidden. Turn it off to keep background network activity to a minimum.":
+    "Lets scheduled downloads and release webhooks check for updates while Harbor is hidden. Turn it off to keep background network activity to a minimum.",
+  "Click a swatch or drag": "Click a swatch or drag",
+  Tight: "Tight",
+  Mid: "Mid",
+  Wide: "Wide",
+  "Enter fullscreen": "Enter fullscreen",
+  "Close editor": "Close editor",
+  "Show {control}": "Show {control}",
+  Together: "Together",
+  "Couldn't read that image. Try a different file.":
+    "Couldn't read that image. Try a different file.",
+  "Custom image loaded": "Custom image loaded",
+  Processing: "Processing",
+  "Remove image": "Remove image",
+  "Amazon-style X-Ray: open the cast while you watch and tap anyone for their bio and filmography. Optional on-device face matching can identify who is on screen. Off by default.":
+    "Amazon-style X-Ray: open the cast while you watch and tap anyone for their bio and filmography. Optional on-device face matching can identify who is on screen. Off by default.",
+  "Periodically match faces in the current frame against the cast. Nothing leaves your machine, but this can make playback stutter on lower-power laptops. Leave it off unless you need live matches.":
+    "Periodically match faces in the current frame against the cast. Nothing leaves your machine, but this can make playback stutter on lower-power laptops. Leave it off unless you need live matches.",
+
   "A source couldn't be reached": "A source couldn't be reached",
   "{n} sources couldn't be reached": "{n} sources couldn't be reached",
   "blocked by the network policy": "blocked by the network policy",
@@ -11,7 +57,7 @@ const uiFallback: Record<string, string> = {
   "Refresh subtitle": "Refresh subtitle",
   "Translating… try again in a minute": "Translating… try again in a minute",
   "Translating… we'll add it when it's ready": "Translating… we'll add it when it's ready",
-  "Translations": "Translations",
+  Translations: "Translations",
   "Showing {lang}": "Showing {lang}",
   "Sends HDR to the display through macOS EDR instead of mapping it down to SDR. Needs HDR-to-SDR tonemapping off, mpv embedded, and a display with HDR headroom. Takes effect on the next video. Experimental: color can look flat, and an SDR video after an HDR one may need a window resize.":
     "Sends HDR to the display through macOS EDR instead of mapping it down to SDR. Needs HDR-to-SDR tonemapping off, mpv embedded, and a display with HDR headroom. Takes effect on the next video. Experimental: color can look flat, and an SDR video after an HDR one may need a window resize.",

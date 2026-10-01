@@ -23,6 +23,8 @@ import { SectionCards } from "./settings/section-cards";
 import { LicensesPanel } from "./settings/licenses-panel";
 import { IconsPanel } from "./settings/icons-panel";
 import "./settings/tv-panel/store";
+import { SettingsPageDisplayContext } from "./settings/shared";
+import { PagePreferences, pagePreference } from "./settings/page-preferences";
 import { useThemeLibraryOpen } from "./settings/theme-panel/library-open-store";
 import { BackToTop } from "@/components/back-to-top";
 import { resetOmdbBudget } from "@/lib/providers/omdb";
@@ -664,6 +666,19 @@ export function Settings({ visible = true }: { visible?: boolean }) {
     const tid = window.setTimeout(run, 200);
     return () => window.clearTimeout(tid);
   }, [activeGroup]);
+  const activePagePreference = pagePreference(settings.settingsPagePreferences, active);
+
+  const updateActivePagePreference = (patch: Partial<typeof activePagePreference>) => {
+    update({
+      settingsPagePreferences: {
+        ...settings.settingsPagePreferences,
+        [active]: {
+          ...settings.settingsPagePreferences[active],
+          ...patch,
+        },
+      },
+    });
+  };
 
   useEffect(() => {
     if (themeLibOpen) scrollRef.current?.scrollTo({ top: 0 });
@@ -672,176 +687,193 @@ export function Settings({ visible = true }: { visible?: boolean }) {
   const chromeHidden = wide || (active === "relay" && relayMode !== "panel");
 
   return (
-    <SettingsActiveContext.Provider value={{ setActive: handleNav, openPage }}>
-      <PageActionsProvider value={{ reg: pageActions, setReg: setPageActions }}>
-        <SubTabsProvider value={{ section: active, reg: subReg, setReg: setSubReg }}>
-          <div ref={shellRef} className="harbor-settings-shell flex h-full flex-col bg-canvas">
+    <SettingsPageDisplayContext.Provider value={{ compact: activePagePreference.compact }}>
+      <SettingsActiveContext.Provider value={{ setActive: handleNav, openPage }}>
+        <PageActionsProvider value={{ reg: pageActions, setReg: setPageActions }}>
+          <SubTabsProvider value={{ section: active, reg: subReg, setReg: setSubReg }}>
             <div
-              data-tauri-drag-region
-              className="hset-top-space shrink-0"
-              style={{ blockSize: "var(--hset-chrome-h, 92px)" }}
-            />
-            <div className="hset-grid" data-browse-open={compact && browseOpen ? "" : undefined}>
-              <SettingsTools
-                query={query}
-                setQuery={(value) => {
-                  setQuery(value);
-                  if (compact && value.trim()) setBrowseOpen(true);
-                }}
-                onSubmit={handleNav}
+              data-settings-root
+              ref={shellRef}
+              className="harbor-settings-shell flex h-full flex-col bg-canvas"
+            >
+              <div
+                data-tauri-drag-region
+                className="hset-top-space shrink-0"
+                style={{ blockSize: "var(--hset-chrome-h, 92px)" }}
               />
-              <div className="hset-heading">
-                <div className="hset-content">
-                  <h1 ref={titleRef} tabIndex={-1} className="hset-title">
-                    {t(landingGroup?.label ?? SECTION_META[active].label)}
-                  </h1>
-                </div>
-                <button
-                  ref={browseRef}
-                  type="button"
-                  className="hset-browse-toggle"
-                  aria-expanded={browseOpen}
-                  aria-controls="hset-page-navigation"
-                  onClick={() => setBrowseOpen((open) => !open)}
-                >
-                  {browseOpen ? t("Close pages") : t("Browse pages")}
-                </button>
-              </div>
-              <SettingsSidebar
-                active={active}
-                activeTab={subReg?.value ?? null}
-                meta={SECTION_META}
-                query={query}
-                onSelect={selectFromRail}
-                onJump={handleNav}
-              />
-              <main
-                ref={scrollRef}
-                inert={compact && browseOpen}
-                className="hset-main"
-                data-hset-wide={wide ? "" : undefined}
-              >
-                <div className="hset-content">
-                  <Suspense
-                    fallback={
-                      <div
-                        className="h-64 rounded-md bg-elevated"
-                        aria-label={t("Loading settings")}
-                      />
-                    }
+              <div className="hset-grid" data-browse-open={compact && browseOpen ? "" : undefined}>
+                <SettingsTools
+                  query={query}
+                  setQuery={(value) => {
+                    setQuery(value);
+                    if (compact && value.trim()) setBrowseOpen(true);
+                  }}
+                  onSubmit={handleNav}
+                />
+                <div className="hset-heading">
+                  <div className="hset-content">
+                    <h1 ref={titleRef} tabIndex={-1} className="hset-title">
+                      {t(landingGroup?.label ?? SECTION_META[active].label)}
+                    </h1>
+                  </div>
+                  <button
+                    ref={browseRef}
+                    type="button"
+                    className="hset-browse-toggle"
+                    aria-expanded={browseOpen}
+                    aria-controls="hset-page-navigation"
+                    onClick={() => setBrowseOpen((open) => !open)}
                   >
-                    {landingGroup && (
-                      <SectionCards
-                        sections={landingGroup.children}
-                        meta={SECTION_META}
-                        onOpen={(id) => handleNav(id)}
-                      />
-                    )}
-                    <div
-                      key={active}
-                      className={`harbor-cascade flex flex-col ${landingGroup ? "hidden" : ""}`}
-                    >
-                      {active === "basics" && <BasicsPanel />}
-
-                      {active === "account" && <AccountStub />}
-
-                      {active === "library" && (
-                        <LibraryPanel
-                          tmdbDraft={tmdbDraft}
-                          omdbDraft={omdbDraft}
-                          rpdbDraft={rpdbDraft}
-                          fanartDraft={fanartDraft}
-                          tvdbDraft={tvdbDraft}
-                          setTmdbDraft={setTmdbDraft}
-                          setOmdbDraft={setOmdbDraft}
-                          setRpdbDraft={setRpdbDraft}
-                          setFanartDraft={setFanartDraft}
-                          setTvdbDraft={setTvdbDraft}
-                          savedKey={savedKey}
-                          saveKey={saveKey}
-                        />
-                      )}
-
-                      {active === "relay" && (
-                        <RelaySection mode={relayMode} onModeChange={setRelayMode} />
-                      )}
-
-                      {active === "streaming" && (
-                        <StreamingSourcesPanel
-                          rdDraft={rdDraft}
-                          tbDraft={tbDraft}
-                          adDraft={adDraft}
-                          pmDraft={pmDraft}
-                          dlDraft={dlDraft}
-                          setRdDraft={setRdDraft}
-                          setTbDraft={setTbDraft}
-                          setAdDraft={setAdDraft}
-                          setPmDraft={setPmDraft}
-                          setDlDraft={setDlDraft}
-                          savedKey={savedKey}
-                          saveKey={saveKey}
-                        />
-                      )}
-
-                      {active === "streamFilters" && <StreamFiltersPanel />}
-
-                      {active === "p2p" && <P2PPanel />}
-
-                      {active === "plugins" && <PluginsPanel />}
-
-                      {active === "language" && <LanguagePanel />}
-                      {active === "subtitles" && <SubtitlesPanel />}
-
-                      {active === "player" && <QualityPanel />}
-
-                      {active === "mpv" && <MpvPanel />}
-
-                      {active === "anime" && <AnimePanel />}
-
-                      {active === "shaders" && <ShadersPanel />}
-
-                      {active === "playerLayout" && <PlayerLayoutPanel />}
-
-                      {active === "hotkeys" && <HotkeysPanel />}
-
-                      {active === "controllers" && <ControllersPanel />}
-
-                      {active === "theme" && <ThemePanel />}
-
-                      {active === "badges" && <StreamBadgesPanel />}
-                      {active === "awardIcons" && <AwardIconsPanel />}
-
-                      {active === "webhooks" && <WebhooksPanel />}
-
-                      {active === "bug" && <BugReportPanel />}
-                      {active === "support" && <SupportPanel />}
-
-                      {active === "remotes" && <RemotesPanel />}
-
-                      {active === "tv" && <TvPanel />}
-
-                      {active === "bigPicture" && <BigPicturePanel />}
-
-                      {active === "storage" && <StoragePanel />}
-
-                      {active === "trackers" && <TrackersPanel />}
-
-                      {active === "updates" && <UpdatesPanel />}
-
-                      {active === "advanced" && <AdvancedPanel />}
-
-                      {active === "licenses" && <LicensesPanel />}
-                      {active === "icons" && <IconsPanel />}
-                    </div>
-                  </Suspense>
+                    {browseOpen ? t("Close pages") : t("Browse pages")}
+                  </button>
                 </div>
-                {pageActions && !chromeHidden && <SettingsFooter reg={pageActions} />}
-              </main>
+                <SettingsSidebar
+                  active={active}
+                  activeTab={subReg?.value ?? null}
+                  meta={SECTION_META}
+                  query={query}
+                  onSelect={selectFromRail}
+                  onJump={handleNav}
+                />
+                <main
+                  ref={scrollRef}
+                  inert={compact && browseOpen}
+                  className="hset-main"
+                  data-hset-wide={wide ? "" : undefined}
+                >
+                  <div className="hset-content">
+                    {!landing && (
+                      <>
+                        <PagePreferences
+                          value={activePagePreference}
+                          onChange={updateActivePagePreference}
+                        />
+                        {activePagePreference.showIntro && (
+                          <p className="text-ink-muted">{t(SECTION_META[active].sub)}</p>
+                        )}
+                      </>
+                    )}
+                    <Suspense
+                      fallback={
+                        <div
+                          className="h-64 rounded-md bg-elevated"
+                          aria-label={t("Loading settings")}
+                        />
+                      }
+                    >
+                      {landingGroup && (
+                        <SectionCards
+                          sections={landingGroup.children}
+                          meta={SECTION_META}
+                          onOpen={(id) => handleNav(id)}
+                        />
+                      )}
+                      <div
+                        key={active}
+                        className={`harbor-cascade flex flex-col ${landingGroup ? "hidden" : ""}`}
+                      >
+                        {active === "basics" && <BasicsPanel />}
+
+                        {active === "account" && <AccountStub />}
+
+                        {active === "library" && (
+                          <LibraryPanel
+                            tmdbDraft={tmdbDraft}
+                            omdbDraft={omdbDraft}
+                            rpdbDraft={rpdbDraft}
+                            fanartDraft={fanartDraft}
+                            tvdbDraft={tvdbDraft}
+                            setTmdbDraft={setTmdbDraft}
+                            setOmdbDraft={setOmdbDraft}
+                            setRpdbDraft={setRpdbDraft}
+                            setFanartDraft={setFanartDraft}
+                            setTvdbDraft={setTvdbDraft}
+                            savedKey={savedKey}
+                            saveKey={saveKey}
+                          />
+                        )}
+
+                        {active === "relay" && (
+                          <RelaySection mode={relayMode} onModeChange={setRelayMode} />
+                        )}
+
+                        {active === "streaming" && (
+                          <StreamingSourcesPanel
+                            rdDraft={rdDraft}
+                            tbDraft={tbDraft}
+                            adDraft={adDraft}
+                            pmDraft={pmDraft}
+                            dlDraft={dlDraft}
+                            setRdDraft={setRdDraft}
+                            setTbDraft={setTbDraft}
+                            setAdDraft={setAdDraft}
+                            setPmDraft={setPmDraft}
+                            setDlDraft={setDlDraft}
+                            savedKey={savedKey}
+                            saveKey={saveKey}
+                          />
+                        )}
+
+                        {active === "streamFilters" && <StreamFiltersPanel />}
+
+                        {active === "p2p" && <P2PPanel />}
+
+                        {active === "plugins" && <PluginsPanel />}
+
+                        {active === "language" && <LanguagePanel />}
+                        {active === "subtitles" && <SubtitlesPanel />}
+
+                        {active === "player" && <QualityPanel />}
+
+                        {active === "mpv" && <MpvPanel />}
+
+                        {active === "anime" && <AnimePanel />}
+
+                        {active === "shaders" && <ShadersPanel />}
+
+                        {active === "playerLayout" && <PlayerLayoutPanel />}
+
+                        {active === "hotkeys" && <HotkeysPanel />}
+
+                        {active === "controllers" && <ControllersPanel />}
+
+                        {active === "theme" && <ThemePanel />}
+
+                        {active === "badges" && <StreamBadgesPanel />}
+                        {active === "awardIcons" && <AwardIconsPanel />}
+
+                        {active === "webhooks" && <WebhooksPanel />}
+
+                        {active === "bug" && <BugReportPanel />}
+                        {active === "support" && <SupportPanel />}
+
+                        {active === "remotes" && <RemotesPanel />}
+
+                        {active === "tv" && <TvPanel />}
+
+                        {active === "bigPicture" && <BigPicturePanel />}
+
+                        {active === "storage" && <StoragePanel />}
+
+                        {active === "trackers" && <TrackersPanel />}
+
+                        {active === "updates" && <UpdatesPanel />}
+
+                        {active === "advanced" && <AdvancedPanel />}
+
+                        {active === "licenses" && <LicensesPanel />}
+                        {active === "icons" && <IconsPanel />}
+                      </div>
+                    </Suspense>
+                  </div>
+                  {pageActions && !chromeHidden && <SettingsFooter reg={pageActions} />}
+                </main>
+              </div>
+              <BackToTop scrollRef={scrollRef} />
             </div>
-            <BackToTop scrollRef={scrollRef} />
-          </div>
-        </SubTabsProvider>
-      </PageActionsProvider>
-    </SettingsActiveContext.Provider>
+          </SubTabsProvider>
+        </PageActionsProvider>
+      </SettingsActiveContext.Provider>
+    </SettingsPageDisplayContext.Provider>
   );
 }

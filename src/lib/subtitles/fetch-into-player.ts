@@ -37,8 +37,8 @@ import { releaseCompatibilityPercent } from "./release-match";
 import { isSafeProviderSubtitleUrl } from "./provider-url";
 import { SUBTITLE_PROVIDER_TIMEOUT_MS } from "./autoload";
 
-const EXTRA_TRACKS_PER_LANGUAGE = 15;
-const DEEP_EXTRA_TRACKS = 15;
+const EXTRA_TRACKS_PER_LANGUAGE = 40;
+const DEEP_EXTRA_TRACKS = 60;
 const DEEP_TIMEOUT_MS = 20_000;
 const BUILT_IN_TIMEOUT_MS = 12_000;
 const BUILT_IN_EAGER_LIMIT_PER_LANGUAGE = 1;
@@ -60,6 +60,8 @@ export type SubFetchParams = {
   settings: Settings;
   addons: Addon[];
   langs: string[];
+  /** Languages used to fetch the picker list. Empty requests every available language. */
+  searchLangs?: string[];
   searchImdbId: string | null | undefined;
   candidateIds: string[];
   season?: number;
@@ -242,7 +244,6 @@ export async function fetchSubtitlesIntoPlayer(
   const rankedResults = (results: SubResult[]) =>
     results
       .filter((result) => isSafeProviderSubtitleUrl(result.url))
-      .filter((r) => langScore(r.lang ?? "", p.langs) >= 0)
       .sort((a, b) => {
         const language = langScore(b.lang ?? "", p.langs) - langScore(a.lang ?? "", p.langs);
         return language !== 0 ? language : compareSubtitleMatch(a, b, hints);
@@ -316,7 +317,7 @@ export async function fetchSubtitlesIntoPlayer(
       title: p.src.meta.name,
       season: p.season,
       episode: p.episode,
-      langs: p.langs,
+      langs: p.searchLangs ?? p.langs,
       videoHash: p.videoHash,
       videoSize: p.videoSize,
       filename: subtitleStreamDescriptor(p.src.streamRef),
