@@ -146,6 +146,7 @@ jobs:
         if: steps.native-changes.outputs.changed == 'true'
         uses: Swatinem/rust-cache@v2
         with:
+          cache-on-failure: "true"
           workspaces: |
             harbor-core
             src-tauri
@@ -153,11 +154,13 @@ jobs:
       - name: Check Tauri application
         if: steps.native-changes.outputs.changed == 'true'
         env:
-          TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
+          # Compile-only checks do not stage installer sidecars or resources.
+          TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
       - name: Test Tauri application
         if: steps.native-changes.outputs.changed == 'true'
         env:
-          TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
+          # Compile-only checks do not stage installer sidecars or resources.
+          TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
         run: cargo test --manifest-path src-tauri/Cargo.toml
