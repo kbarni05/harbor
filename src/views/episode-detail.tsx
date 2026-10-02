@@ -7,7 +7,7 @@ import type { CastEntry } from "@/lib/providers/tmdb";
 import { fetchEpisodeData } from "@/lib/episode-data-fetcher";
 import { meta as fetchCinemetaMeta } from "@/lib/cinemeta";
 import { useSettings, type Settings } from "@/lib/settings";
-import { useScrollMemory, useView, type PlayEpisode } from "@/lib/view";
+import { useScrollMemory, useView, type EpisodeDetailPlayback, type PlayEpisode } from "@/lib/view";
 import { useT } from "@/lib/i18n";
 import { openUrl } from "@/lib/window";
 import { useOmdbScores, omdbScores as fetchOmdbScores } from "@/lib/providers/omdb";
@@ -35,6 +35,7 @@ export interface EpisodeDetailViewProps {
   season: number;
   episode: number;
   seriesMeta?: Meta;
+  playback?: EpisodeDetailPlayback;
 }
 
 export function EpisodeDetailView({
@@ -42,6 +43,7 @@ export function EpisodeDetailView({
   season,
   episode,
   seriesMeta: initialSeriesMeta,
+  playback,
 }: EpisodeDetailViewProps) {
   const t = useT();
   const { settings } = useSettings();
@@ -61,8 +63,8 @@ export function EpisodeDetailView({
   const preferredName = preferredEpisodeName(preferredVideo);
   const preferredOverview = preferredEpisodeOverview(preferredVideo);
 
-  const resolvedImdb = useTmdbImdbId(seriesMeta?.id);
-  const imdbId = resolvedImdb ?? (seriesMeta?.id.startsWith("tt") ? seriesMeta.id : null);
+  const resolvedImdb = useTmdbImdbId(seriesId);
+  const imdbId = resolvedImdb ?? (seriesId.startsWith("tt") ? seriesId : null);
   const omdbScores = useOmdbScores(imdbId ?? undefined);
   const episodeImdbId = episodeData?.imdbId ?? undefined;
   const episodeOmdbScores = useOmdbScores(episodeImdbId);
@@ -107,20 +109,31 @@ export function EpisodeDetailView({
     setLoading(true);
     setError(null);
     setEpisodeData(null);
+    setSeriesMeta(initialSeriesMeta ?? null);
 
     (async () => {
       try {
         let meta: Meta | undefined = initialSeriesMeta;
         if (!meta) {
           const fetched = await fetchCinemetaMeta("series", seriesId);
-          if (cancelled || !fetched) return;
+          if (cancelled) return;
+          if (!fetched) {
+            setError(t("Episode information is not available"));
+            return;
+          }
           meta = fetched;
           setSeriesMeta(meta);
         }
 
-        const data = await fetchEpisodeData(seriesId, meta, season, episode, {
-          tmdbKey,
-        } as Settings);
+        const lookupMeta = playback?.meta.id === seriesId ? playback.meta : meta;
+        const data = await fetchEpisodeData(
+          seriesId,
+          lookupMeta,
+          season,
+          episode,
+          { tmdbKey } as Settings,
+          playback?.episode,
+        );
         if (cancelled) return;
 
         if (data) {
@@ -142,7 +155,7 @@ export function EpisodeDetailView({
     return () => {
       cancelled = true;
     };
-  }, [episodeKey, initialSeriesMeta, tmdbKey]);
+  }, [episodeKey, initialSeriesMeta, playback, tmdbKey]);
 
   const getImageUrl = (path: string | null | undefined, size = "original"): string | undefined => {
     if (!path) return undefined;
@@ -187,14 +200,20 @@ export function EpisodeDetailView({
       season: episodeData.seasonNumber,
       episode: episodeData.episodeNumber,
       runtime: episodeData.runtime ?? undefined,
-      name: preferredName ?? episodeData.name,
-      still: preferredVideo?.thumbnail ?? (getImageUrl(episodeData.stillPath, "w300") || undefined),
-      overview: preferredOverview ?? (episodeData.overview || undefined),
+      ...playback?.episode,
+      name: preferredName ?? playback?.episode?.name ?? episodeData.name,
+      still:
+        preferredVideo?.thumbnail ??
+        playback?.episode?.still ??
+        (getImageUrl(episodeData.stillPath, "w300") || undefined),
+      overview:
+        preferredOverview ?? playback?.episode?.overview ?? (episodeData.overview || undefined),
     };
-    openPicker(seriesMeta, playEpisode, { autoPlay: settings.instantPlay });
+    openPicker(playback?.meta ?? seriesMeta, playEpisode, { autoPlay: settings.instantPlay });
   }, [
     seriesMeta,
     episodeData,
+    playback,
     openPicker,
     preferredName,
     preferredOverview,

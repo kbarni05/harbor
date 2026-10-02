@@ -10,6 +10,7 @@ $ErrorActionPreference = 'Stop'
 $Installer = (Resolve-Path -LiteralPath $Installer).Path
 $ReferenceInstaller = (Resolve-Path -LiteralPath $ReferenceInstaller).Path
 $ExpectedPayload = (Resolve-Path -LiteralPath $ExpectedPayload).Path
+$ExpectedVersion = ((Get-Item -LiteralPath $Installer).VersionInfo.FileVersion.Split('.') | Select-Object -First 3) -join '.'
 $TestDirectory = [IO.Path]::GetFullPath($TestDirectory)
 if (Test-Path -LiteralPath $TestDirectory) { throw 'Use a new, empty test directory' }
 $results = [Collections.Generic.List[object]]::new()
@@ -43,7 +44,7 @@ function Assert-Payload {
     }
   }
   $version = (Get-Item -LiteralPath (Join-Path $TestDirectory 'harbor.exe')).VersionInfo.FileVersion
-  if ($version -ne '0.9.128' -and $version -ne '0.9.128.0') { throw "Wrong installed version: $version" }
+  if ($version -ne $ExpectedVersion -and $version -ne "$ExpectedVersion.0") { throw "Wrong installed version: $version" }
   $results.Add([pscustomobject]@{ scenario = 'installed payload'; files = $files.Count; version = $version })
 }
 
@@ -62,10 +63,10 @@ try {
   if ($referenceVersion -ne '0.9.127' -and $referenceVersion -ne '0.9.127.0') { throw 'Wrong reference version' }
   Invoke-Setup $Installer 'upgrade from 0.9.127'
   Assert-Payload
-  Invoke-Setup $Installer 'reinstall 0.9.128'
+  Invoke-Setup $Installer "reinstall $ExpectedVersion"
   Assert-Payload
   Invoke-Uninstall
-  Invoke-Setup $Installer 'fresh 0.9.128 install after uninstall'
+  Invoke-Setup $Installer "fresh $ExpectedVersion install after uninstall"
   Assert-Payload
   Invoke-Uninstall
 } finally {

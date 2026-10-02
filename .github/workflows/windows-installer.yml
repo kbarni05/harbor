@@ -1,6 +1,8 @@
 name: Windows installer
 
 on:
+  push:
+    branches: [upgrade/harbor-0.9.128]
   workflow_dispatch:
     inputs:
       existing_build_run_id:
@@ -60,7 +62,7 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Recover verified libmpv from the published installer
+      - name: Download checksum-verified reference installer
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -78,26 +80,11 @@ jobs:
           if ((Get-FileHash $previous -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedInstaller) {
             throw 'Previous installer checksum mismatch'
           }
-          $extracted = Join-Path $download 'extracted'
-          7z x -y $previous "-o$extracted"
-          if ($LASTEXITCODE -ne 0) { throw 'Previous installer extraction failed' }
-          # The source downloader's pin is stale. Preserve it and reuse the DLL
-          # authenticated by the immutable previous-installer checksum above.
-          # Also require agreement with the upstream release's published digest.
-          $verified = @(Get-ChildItem $extracted -Recurse -Filter 'libmpv-2.dll')
-          if ($verified.Count -ne 1) { throw 'Previous installer must contain exactly one libmpv DLL' }
-          $dllHash = (Get-FileHash $verified[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          $publishedDigest = & gh api repos/harborstremio/harbor/releases/tags/mpvdll --jq '.assets[] | select(.name=="libmpv-2.dll") | .digest'
-          if ($LASTEXITCODE -ne 0 -or $publishedDigest -ne "sha256:$dllHash") {
-            throw 'Recovered DLL does not match the official release asset digest'
-          }
-          Copy-Item $verified[0].FullName src-tauri/libmpv/libmpv-2.dll
-          "libmpv verified through the previous installer checksum and official asset digest; SHA-256: $dllHash" | Add-Content $env:GITHUB_STEP_SUMMARY
           "HARBOR_REFERENCE_INSTALLER=$previous" | Add-Content $env:GITHUB_ENV
 
       - name: Prepare verified native assets
         run: |
-          foreach ($script in @('setup:binaries', 'setup:mpv', 'setup:fonts')) {
+          foreach ($script in @('setup:libmpv', 'setup:binaries', 'setup:mpv', 'setup:fonts')) {
             $output = @(& pnpm run $script 2>&1)
             $code = $LASTEXITCODE
             $output | ForEach-Object { Write-Host $_ }
@@ -283,7 +270,7 @@ jobs:
             "Packaging workflow commit: $env:GITHUB_SHA"
             'Includes both uploaded custom branches: cloud-settings sync, Hungarian localization, preferred metadata, player/subtitle/HDR reliability, playback statistics, and settings/performance controls.'
             'New upstream strings without Hungarian translations retain the English fallback.'
-            'libmpv is reused from the checksum-verified previous installer and also checked against the official asset digest; the repository downloader pin is unchanged.'
+            'libmpv is fetched from the upstream beta release and verified against the checksum pinned in source.'
             'Android-extension runtime is not included, matching the previous cloud-sync installer.'
             'Offline WebView2 prerequisite is embedded and its Microsoft signature verified.'
             'Actual silent reference install, upgrade, reinstall, fresh install and uninstall passed; installed payload hashes match. See INSTALL-TEST.json.'

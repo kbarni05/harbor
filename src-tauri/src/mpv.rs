@@ -52,6 +52,7 @@ pub struct MpvStartArgs {
     pub mac_edr: Option<bool>,
     pub is_live: Option<bool>,
     pub full_download: Option<bool>,
+    pub cache_dir: Option<String>,
     pub startup_profile: Option<String>,
     pub headers: Option<HashMap<String, String>>,
     pub extra_options: Option<String>,
@@ -173,6 +174,22 @@ impl MpvState {
             lifecycle: Mutex::new(()),
         }
     }
+
+    /// The live handle, so the render target can be moved to another window without
+    /// restarting playback. A second session would re-open the stream and seek.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(crate) async fn ctx_addr(&self) -> Option<usize> {
+        let guard = self.inner.lock().await;
+        guard.as_ref().map(|session| session.mpv.ctx.as_ptr() as usize)
+    }
+}
+
+#[cfg(target_os = "macos")]
+static MAC_EDR_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+pub(crate) fn mac_edr_active() -> bool {
+    MAC_EDR_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Pause from an operating-system window event without depending on the webview
@@ -717,6 +734,14 @@ pub async fn mpv_start(
 ) -> Result<(), String> {
     #[cfg(windows)]
     let _lifecycle = state.lifecycle.lock().await;
+    let playback_cache = if args.is_live.unwrap_or(false) || !args.full_download.unwrap_or(false) {
+        None
+    } else {
+        let base = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+        let dir = crate::playback_cache::cache_dir(&base, args.cache_dir.as_deref())?;
+        crate::playback_cache::prepare_dir(&dir)?;
+        Some(dir)
+    };
     // OS-level HDR state before this transition begins. Compared at teardown
     // against the script-reported state: only off->on waits for restore.
     #[cfg(windows)]
@@ -775,6 +800,12 @@ pub async fn mpv_start(
     #[cfg(windows)]
     let mut g = state.inner.lock().await;
 
+    if let Some(dir) = &playback_cache {
+        if args.cache_dir.as_deref().is_some_and(|s| !s.trim().is_empty()) {
+            let _ = crate::temp_prune::sweep_mpv_cache(dir.clone());
+        }
+    }
+
     let want_embed = args.embed.unwrap_or(false);
     let embed_hwnd = if want_embed {
         get_main_hwnd_str(&app)
@@ -802,17 +833,7 @@ pub async fn mpv_start(
     #[cfg(not(windows))]
     let separate_screen_for_init = None;
     let args_for_init = args.clone();
-    let cache_dir = if args.full_download.unwrap_or(false) {
-        app.path()
-            .app_cache_dir()
-            .ok()
-            .map(|base| base.join("mpv-cache"))
-    } else {
-        None
-    };
-    if let Some(path) = cache_dir.as_ref() {
-        let _ = std::fs::create_dir_all(path);
-    }
+    let cache_dir = playback_cache.clone();
     let cache_dir_for_init = cache_dir.clone();
     let init_err: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
     let init_err_cap = init_err.clone();
@@ -887,6 +908,7 @@ pub async fn mpv_start(
             .map_err(|e| format!("ns_window: {:?}", e))? as i64;
         let mpv_ctx_addr: usize = mpv.ctx.as_ptr() as usize;
         let mac_edr = args.mac_edr.unwrap_or(false);
+        MAC_EDR_ACTIVE.store(mac_edr, std::sync::atomic::Ordering::Relaxed);
         let (tx, rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
         let _ = app.run_on_main_thread(move || {
             let res = match std::ptr::NonNull::new(mpv_ctx_addr as *mut libmpv2_sys::mpv_handle) {

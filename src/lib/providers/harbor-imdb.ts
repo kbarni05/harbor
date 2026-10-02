@@ -26,7 +26,9 @@ const IMDB_PARENTS_GUIDE_QUERY = `
 const titleCache = new Map<string, number | null>();
 const parentalCache = new Map<string, ParentalCategory[]>();
 const parentalInflight = new Map<string, Promise<ParentalCategory[]>>();
-const episodeCache = new Map<string, Map<string, number>>();
+const EPISODE_RATINGS_TTL_MS = 60 * 60_000;
+const EMPTY_EPISODE_RATINGS_TTL_MS = 60_000;
+const episodeCache = new Map<string, { ratings: Map<string, number>; expiresAt: number }>();
 const episodeInflight = new Map<string, Promise<Map<string, number>>>();
 
 registerEvictable("harbor-imdb-episodes", (aggressive) => {
@@ -39,14 +41,14 @@ registerEvictable("harbor-imdb-parental", (aggressive) => {
 
 export async function harborImdbEpisodes(seriesTt: string): Promise<Map<string, number>> {
   if (!seriesTt.startsWith("tt")) return new Map();
-  const cached = episodeCache.get(seriesTt);
+  const cached = harborImdbEpisodesCached(seriesTt);
   if (cached) return cached;
   const pending = episodeInflight.get(seriesTt);
   if (pending) return pending;
   const p = (async () => {
+    const map = new Map<string, number>();
     try {
       const res = await fetch(`${BASE}/episodes/${seriesTt}`);
-      const map = new Map<string, number>();
       if (res.ok) {
         const j = (await res.json()) as { ratings?: Record<string, number> };
         for (const [k, raw] of Object.entries(j.ratings ?? {})) {
@@ -54,22 +56,29 @@ export async function harborImdbEpisodes(seriesTt: string): Promise<Map<string, 
           if (Number.isFinite(v) && v > 0) map.set(k, v);
         }
       }
-      lruSet(episodeCache, seriesTt, map, 200);
-      return map;
     } catch {
-      const empty = new Map<string, number>();
-      lruSet(episodeCache, seriesTt, empty, 200);
-      return empty;
+      // A temporary outage must not pin missing ratings for the entire session.
     } finally {
       episodeInflight.delete(seriesTt);
     }
+    lruSet(episodeCache, seriesTt, {
+      ratings: map,
+      expiresAt: Date.now() + (map.size > 0 ? EPISODE_RATINGS_TTL_MS : EMPTY_EPISODE_RATINGS_TTL_MS),
+    }, 200);
+    return map;
   })();
   episodeInflight.set(seriesTt, p);
   return p;
 }
 
 export function harborImdbEpisodesCached(seriesTt: string): Map<string, number> | undefined {
-  return episodeCache.get(seriesTt);
+  const cached = episodeCache.get(seriesTt);
+  if (!cached) return undefined;
+  if (Date.now() >= cached.expiresAt) {
+    episodeCache.delete(seriesTt);
+    return undefined;
+  }
+  return cached.ratings;
 }
 
 export async function harborImdbTitle(tt: string): Promise<number | null> {

@@ -12,8 +12,8 @@ const source = readFileSync(
 
 test("a metadata language is independent from the display language", () => {
   assert.match(source, /settings\.tmdbLanguage && settings\.translateDescriptions/);
-  assert.match(source, /meta\.id\.startsWith\("tt"\)/);
-  assert.match(source, /tmdbIdFromImdb\([\s\S]*settings\.tmdbKey,[\s\S]*meta\.id,/);
-  assert.match(source, /tmdbMetadataOverview\(settings\.tmdbKey, tmdbId\)/);
+  assert.match(source, /\^tt\\d\+\$/);
+  assert.match(source, /tmdbIdFromImdb\(request\.key, request\.id, request\.type\)/);
+  assert.match(source, /tmdbMetadataOverview\(request\.key, id, request\.language\)/);
   assert.match(source, /preferredMeta\?\.description \|\| meta\.description/);
 });
