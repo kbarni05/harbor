@@ -116,6 +116,9 @@ jobs:
           tests/i18n-languages.test.ts tests/hdr-overlay-providers.test.mjs
           tests/watchlist-identity.test.mjs
 
+      - name: Verify strict NSIS binary comparison
+        run: ./scripts/test-nsis-payload.ps1
+
       - name: Verify preserved build source
         if: inputs.existing_build_run_id != ''
         env:
@@ -244,6 +247,11 @@ jobs:
           }
           foreach ($name in $inputs.Keys) {
             $matches = @(Get-ChildItem $extracted -Recurse -Force -File | Where-Object Name -eq $name)
+            if ($name -eq 'harbor.exe') {
+              if ($matches.Count -ne 1) { throw 'Expected exactly one packaged application executable' }
+              ./scripts/verify-nsis-payload.ps1 -Compiled $inputs[$name] -Packaged $matches[0].FullName
+              continue
+            }
             $expectedHash = (Get-FileHash $inputs[$name] -Algorithm SHA256).Hash
             if (-not ($matches | Where-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash -eq $expectedHash })) {
               $payloadNames = ((Get-ChildItem $extracted -Recurse -Force -File).Name -join ', ')
