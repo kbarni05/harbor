@@ -18,12 +18,18 @@ test("a text-sync read failure remains visible as feedback instead of vanishing"
   assert.match(player, /showSyncToast\("error"/);
 });
 
-test("leaving fullscreen restores the prior window state after the Windows transition", () => {
+test("leaving fullscreen restores the prior window state on the window thread", () => {
   const source = read("src-tauri/src/fullscreen.rs");
 
   assert.match(source, /let maximized = main\.is_maximized\(\)\.unwrap_or\(false\);/);
   assert.match(source, /maximized,/);
-  assert.match(source, /tokio::time::sleep\(std::time::Duration::from_millis\(150\)\)\.await/);
+  assert.match(source, /app\.run_on_main_thread\(move \|\| \{/);
+  assert.match(source, /exit_fullscreen\(main, saved, restore_position\.unwrap_or\(true\)\)/);
+  assert.doesNotMatch(source, /tokio::time::sleep/);
+  const exit = source.slice(source.indexOf("fn exit_fullscreen("));
+  assert.ok(
+    exit.indexOf("main.set_fullscreen(false)") < exit.indexOf("saved.lock().unwrap().take()"),
+  );
   assert.match(source, /if saved\.maximized \{[\s\S]*main\.maximize\(\)/);
   assert.match(source, /PhysicalSize \{[\s\S]*width: geo\.w,[\s\S]*height: geo\.h/);
 });

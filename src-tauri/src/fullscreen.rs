@@ -115,8 +115,6 @@ fn exit_fullscreen(
     if is_fs {
         main.set_fullscreen(false)
             .map_err(|e| format!("set_fullscreen(false): {}", e))?;
-        #[cfg(windows)]
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     }
 
     // Restore even when the window is already unfullscreen'd: frontend paths
