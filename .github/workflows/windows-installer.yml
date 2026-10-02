@@ -93,7 +93,7 @@ jobs:
           }
           Copy-Item $verified[0].FullName src-tauri/libmpv/libmpv-2.dll
           "libmpv verified through the previous installer checksum and official asset digest; SHA-256: $dllHash" | Add-Content $env:GITHUB_STEP_SUMMARY
-          Remove-Item $download -Recurse -Force
+          "HARBOR_REFERENCE_INSTALLER=$previous" | Add-Content $env:GITHUB_ENV
 
       - name: Prepare verified native assets
         run: |
@@ -265,7 +265,14 @@ jobs:
               throw "Installer payload is missing or stale: $name"
             }
           }
+          $webview = @(Get-ChildItem $extracted -Recurse -Force -File -Filter 'MicrosoftEdgeWebView2RuntimeInstaller.exe')
+          if ($webview.Count -ne 1) { throw 'Missing embedded offline WebView2 installer' }
+          $signature = Get-AuthenticodeSignature $webview[0].FullName
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+            throw 'Embedded WebView2 installer must have a valid Microsoft signature'
+          }
           New-Item -ItemType Directory -Force artifacts | Out-Null
+          ./scripts/test-windows-installer.ps1 -Installer $installer.FullName -ReferenceInstaller $env:HARBOR_REFERENCE_INSTALLER -ExpectedPayload $extracted -TestDirectory (Join-Path $env:RUNNER_TEMP 'harbor-install-smoke') -ReportPath artifacts/INSTALL-TEST.json
           $name = "Harbor_${version}_combined-custom-fixes_no-extension-runtime_x64-setup.exe"
           Copy-Item $installer.FullName "artifacts/$name"
           $hash = (Get-FileHash "artifacts/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -278,7 +285,9 @@ jobs:
             'New upstream strings without Hungarian translations retain the English fallback.'
             'libmpv is reused from the checksum-verified previous installer and also checked against the official asset digest; the repository downloader pin is unchanged.'
             'Android-extension runtime is not included, matching the previous cloud-sync installer.'
-            'The installer is not digitally signed. Installation and live playback are not tested by this build.'
+            'Offline WebView2 prerequisite is embedded and its Microsoft signature verified.'
+            'Actual silent reference install, upgrade, reinstall, fresh install and uninstall passed; installed payload hashes match. See INSTALL-TEST.json.'
+            'The Harbor installer is not digitally signed. Live playback and installation on a machine without WebView2 are not tested by this build.'
           ) | Set-Content artifacts/BUILD-NOTES.txt
           "## Verified Windows installer`n`nVersion: $version`n`nSource: $env:GITHUB_SHA`n`nSHA-256: $hash`n`nAndroid-extension runtime: not included." | Add-Content $env:GITHUB_STEP_SUMMARY
           Write-Host "::notice title=Verified installer::Version $version; source $env:GITHUB_SHA; SHA-256 $hash; no Android-extension runtime."
