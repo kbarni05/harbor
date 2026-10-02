@@ -43,43 +43,68 @@ export function needsImageProxy(url: string): boolean {
   }
 }
 
-const blobCache = new Map<string, string>();
-// Module scoped, like the blob cache beside it. A failure used to live in
-// component state, so every remount re-invoked harbor_fetch for a url already
-// known to be dead, and each of those is a bridge crossing carrying a base64
-// image body. The in-flight map is for the row where twenty cells share a logo.
+const MAX_BLOB_CACHE_ENTRIES = 96;
+type BlobCacheEntry = { src: string; refs: number; touchedAt: number };
+const blobCache = new Map<string, BlobCacheEntry>();
 const deadUrls = new Set<string>();
 const inflight = new Map<string, Promise<string | null>>();
-// Keys written through the thumbnail path, so "clear poster cache" can drop
-// exactly those entries without disturbing other proxied images.
 const thumbKeys = new Set<string>();
+const cacheKeyFor = (url: string, thumbWidthPx?: number): string => `${thumbWidthPx ?? 0}\n${url}`;
 
+function trimBlobCache(keepKey?: string): void {
+  const evictable = [...blobCache.entries()]
+    .filter(([key, entry]) => entry.refs === 0 && key !== keepKey)
+    .sort((a, b) => a[1].touchedAt - b[1].touchedAt);
+  for (const [key, entry] of evictable) {
+    if (blobCache.size <= MAX_BLOB_CACHE_ENTRIES) break;
+    blobCache.delete(key);
+    thumbKeys.delete(key);
+    URL.revokeObjectURL(entry.src);
+  }
+}
+function retain(key: string): BlobCacheEntry | undefined {
+  const entry = blobCache.get(key);
+  if (entry) {
+    entry.refs++;
+    entry.touchedAt = Date.now();
+  }
+  return entry;
+}
+function release(key: string, entry: BlobCacheEntry): void {
+  entry.refs = Math.max(0, entry.refs - 1);
+  entry.touchedAt = Date.now();
+  if (entry.refs === 0 && blobCache.get(key) !== entry) URL.revokeObjectURL(entry.src);
+  trimBlobCache();
+}
 export async function clearThumbCache(): Promise<void> {
-  for (const key of thumbKeys) blobCache.delete(key);
+  for (const key of thumbKeys) {
+    const entry = blobCache.get(key);
+    blobCache.delete(key);
+    if (entry?.refs === 0) URL.revokeObjectURL(entry.src);
+  }
   thumbKeys.clear();
   await invoke("clear_thumb_cache");
 }
-
 export type ThumbCacheSize = { bytes: number; files: number };
-
 export async function getThumbCacheSize(): Promise<ThumbCacheSize | null> {
   try {
     const size = await invoke<ThumbCacheSize>("thumb_cache_size");
-    if (!size || typeof size.bytes !== "number" || typeof size.files !== "number") return null;
-    return size;
+    return size && typeof size.bytes === "number" && typeof size.files === "number" ? size : null;
   } catch {
     return null;
   }
 }
-
 function proxyImage(url: string, thumbWidthPx?: number): Promise<string | null> {
   const key = cacheKeyFor(url, thumbWidthPx);
   const cached = blobCache.get(key);
-  if (cached) return Promise.resolve(cached);
+  if (cached) {
+    cached.touchedAt = Date.now();
+    return Promise.resolve(cached.src);
+  }
   if (deadUrls.has(url)) return Promise.resolve(null);
-  const existing = inflight.get(key);
-  if (existing) return existing;
-  const p = (async () => {
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const request = (async () => {
     try {
       const auth = suwayomiAuthFor(url);
       const resp = await invoke<HarborFetchResponse>("harbor_fetch", {
@@ -95,11 +120,12 @@ function proxyImage(url: string, thumbWidthPx?: number): Promise<string | null> 
       });
       if (!resp.ok) throw new Error(`status ${resp.status}`);
       const type = resp.headers?.["content-type"] || resp.contentType || "image/jpeg";
-      if (type && !type.startsWith("image/")) throw new Error(`type ${type}`);
-      const created = URL.createObjectURL(new Blob([base64ToBytes(resp.body)], { type }));
-      blobCache.set(key, created);
+      if (!type.startsWith("image/")) throw new Error(`type ${type}`);
+      const src = URL.createObjectURL(new Blob([base64ToBytes(resp.body)], { type }));
+      blobCache.set(key, { src, refs: 0, touchedAt: Date.now() });
       if (thumbWidthPx != null) thumbKeys.add(key);
-      return created;
+      trimBlobCache(key);
+      return src;
     } catch {
       deadUrls.add(url);
       return null;
@@ -107,13 +133,9 @@ function proxyImage(url: string, thumbWidthPx?: number): Promise<string | null> 
       inflight.delete(key);
     }
   })();
-  inflight.set(key, p);
-  return p;
+  inflight.set(key, request);
+  return request;
 }
-
-const cacheKeyFor = (url: string, thumbWidthPx?: number): string =>
-  `${thumbWidthPx ?? 0}\n${url}`;
-
 export function useProxiedImageSrc(
   url: string | undefined,
   opts?: { forceProxy?: boolean },
@@ -125,46 +147,43 @@ export function useProxiedImageSrc(
       : needsImageProxy(url));
   const { settings } = useSettings();
   const thumbWidthPx =
-    settings.posterQuality === "max"
-      ? undefined
-      : settings.posterQuality === "high"
-        ? 600
-        : 400;
+    settings.posterQuality === "max" ? undefined : settings.posterQuality === "high" ? 600 : 400;
   const [blob, setBlob] = useState<string | undefined>(() =>
-    url && need ? blobCache.get(cacheKeyFor(url, thumbWidthPx)) : undefined,
+    url && need ? blobCache.get(cacheKeyFor(url, thumbWidthPx))?.src : undefined,
   );
   const [failed, setFailed] = useState(() => !!url && need && deadUrls.has(url));
   useEffect(() => {
+    setFailed(false);
     if (!url || !need) {
-      setFailed(false);
       setBlob(undefined);
       return;
     }
-    const cached = blobCache.get(cacheKeyFor(url, thumbWidthPx));
+    const key = cacheKeyFor(url, thumbWidthPx);
+    const cached = retain(key);
     if (cached) {
-      setFailed(false);
-      setBlob(cached);
-      return;
+      setBlob(cached.src);
+      return () => release(key, cached);
     }
+    setBlob(undefined);
     if (deadUrls.has(url)) {
-      setBlob(undefined);
       setFailed(true);
       return;
     }
-    setFailed(false);
-    setBlob(undefined);
     let alive = true;
-    void proxyImage(url, thumbWidthPx).then((created) => {
-      if (!alive) return;
-      if (created) setBlob(created);
+    let retained: BlobCacheEntry | undefined;
+    void proxyImage(url, thumbWidthPx).then((src) => {
+      if (!alive) {
+        trimBlobCache();
+        return;
+      }
+      retained = retain(key);
+      if (src && retained) setBlob(src);
       else setFailed(true);
     });
     return () => {
       alive = false;
+      if (retained) release(key, retained);
     };
   }, [url, need, thumbWidthPx]);
-  if (!need) return url;
-  // Loading -> undefined (caller shows its placeholder/shimmer). Failed -> the
-  // original url so the <img> errors and the caller's fallback/plate logic runs.
-  return blob ?? (failed ? url : undefined);
+  return need ? (blob ?? (failed ? url : undefined)) : url;
 }

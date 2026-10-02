@@ -16,6 +16,7 @@ import { requestTracker } from "./settings/tracker-request";
 import { SubTabsProvider, type SubTabReg } from "./settings/sub-tabs";
 import { SettingsSidebar } from "./settings/settings-sidebar";
 import { tabsFor } from "./settings/tab-registry";
+import { glideSettingsToTop, useSettingsAnchor, type SettingsAnchorRequest } from "./settings/anchor-navigation";
 import { PageActionsProvider, type PageActionReg } from "./settings/page-actions";
 import { SettingsFooter } from "./settings/settings-footer";
 import { SettingsActiveContext, type SectionId } from "./settings/shared";
@@ -23,6 +24,8 @@ import { SectionCards } from "./settings/section-cards";
 import { LicensesPanel } from "./settings/licenses-panel";
 import { IconsPanel } from "./settings/icons-panel";
 import "./settings/tv-panel/store";
+import { SettingsPageDisplayContext } from "./settings/shared";
+import { PagePreferences, pagePreference } from "./settings/page-preferences";
 import { useThemeLibraryOpen } from "./settings/theme-panel/library-open-store";
 import { BackToTop } from "@/components/back-to-top";
 import { resetOmdbBudget } from "@/lib/providers/omdb";
@@ -33,25 +36,6 @@ import { useMediaQuery } from "@/lib/use-media-query";
 import { isBackKey } from "@/lib/keyboard-navigation/geometry";
 
 const IS_WEB = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
-
-const SCROLL_TOP_MS = 420;
-
-function glideToTop(el: HTMLElement): void {
-  const from = el.scrollTop;
-  if (from <= 0) return;
-  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-    el.scrollTo({ top: 0 });
-    return;
-  }
-  const started = performance.now();
-  const step = (now: number) => {
-    const p = Math.min(1, (now - started) / SCROLL_TOP_MS);
-    const eased = p < 0.5 ? 2 * p * p : 1 - (-2 * p + 2) ** 2 / 2;
-    el.scrollTop = from * (1 - eased);
-    if (p < 1) requestAnimationFrame(step);
-  };
-  requestAnimationFrame(step);
-}
 
 const BasicsPanel = lazy(() =>
   import("./settings/basics-panel").then((m) => ({ default: m.BasicsPanel })),
@@ -373,18 +357,18 @@ export function Settings({ visible = true }: { visible?: boolean }) {
   const [savedKey, setSavedKey] = useState<SavedKey | null>(null);
   const { settingsSectionRequest, topKind, chromeHidden: viewChromeHidden } = useView();
   const TRACKER_IDS = ["trakt", "anilist", "mal", "simkl", "letterboxd"];
-  const resolveSection = (id: string | null | undefined): SectionId => {
+  const resolveSection = (id: SectionId | null | undefined): SectionId => {
     if (!id) return "account";
     if (TRACKER_IDS.includes(id)) {
       requestTracker(id);
       return "trackers";
     }
-    return id as SectionId;
+    return id;
   };
   const [landing, setLanding] = useState<string | null>(null);
   const [active, setActive] = useState<SectionId>(resolveSection(settingsSectionRequest.section));
   const [relayMode, setRelayMode] = useState<RelayMode>("panel");
-  const [pendingAnchor, setPendingAnchor] = useState<string | null>(null);
+  const [pendingAnchor, setPendingAnchor] = useState<SettingsAnchorRequest | null>(null);
   const [pendingPage, setPendingPage] = useState<{ section: SectionId; tab?: string } | null>(null);
   const [query, setQuery] = useState("");
   const compact = useMediaQuery("(max-width: 899px)");
@@ -461,14 +445,19 @@ export function Settings({ visible = true }: { visible?: boolean }) {
     closeBrowse();
     setLanding(null);
     setPendingPage(null);
-    pendingTab.current = tab ?? null;
-    if (tab && id === active) {
-      subRegRef.current?.onChange(tab);
+    // The five trackers are tabs of one panel rather than sections of their own, so a jump
+    // to any of them opens Trackers on that tab instead of an id nothing renders.
+    const isTracker = (TRACKER_IDS as string[]).includes(id);
+    const target = isTracker ? ("trackers" as SectionId) : id;
+    const wantTab = isTracker ? (tab ?? id) : tab;
+    pendingTab.current = wantTab ?? null;
+    if (wantTab && target === active) {
+      subRegRef.current?.onChange(wantTab);
       pendingTab.current = null;
     }
     startTransition(() => {
-      setActive(id);
-      setPendingAnchor(anchor ?? null);
+      setActive(target);
+      setPendingAnchor(anchor ? { anchor, tab: wantTab } : null);
     });
   };
 
@@ -532,9 +521,7 @@ export function Settings({ visible = true }: { visible?: boolean }) {
     setPendingPage(null);
   }, [active, pendingPage, subReg?.value]);
 
-  const triedTabs = useRef<Set<string>>(new Set());
-  const restoreTab = useRef<string | null>(null);
-  const pendingAnchorRef = useRef<string | null>(null);
+  const pendingAnchorRef = useRef<SettingsAnchorRequest | null>(null);
   pendingAnchorRef.current = pendingAnchor;
 
   useEffect(() => {
@@ -550,8 +537,8 @@ export function Settings({ visible = true }: { visible?: boolean }) {
     if (prev === null || next === null || next === prev) return;
     if (pendingAnchorRef.current) return;
     const el = scrollRef.current;
-    if (el) glideToTop(el);
-  }, [subReg?.value]);
+    if (el) return glideSettingsToTop(el);
+  }, [subReg?.value, pendingAnchor]);
 
   const wasVisible = useRef(visible);
   useEffect(() => {
@@ -561,72 +548,7 @@ export function Settings({ visible = true }: { visible?: boolean }) {
     wasVisible.current = visible;
   }, [visible]);
 
-  useEffect(() => {
-    if (!pendingAnchor) return;
-    const target = pendingAnchor;
-    let tries = 0;
-    let timer = 0;
-    const findTarget = (): HTMLElement | null => {
-      const exact = document.getElementById(target);
-      if (exact) return exact;
-      const root = scrollRef.current;
-      if (!root) return null;
-      const sections = Array.from(root.querySelectorAll<HTMLElement>('section[id^="set-"]'));
-      let best: HTMLElement | null = null;
-      for (const s of sections) {
-        if (!(s.id.startsWith(target) || target.startsWith(s.id))) continue;
-        if (
-          best == null ||
-          Math.abs(s.id.length - target.length) < Math.abs(best.id.length - target.length)
-        ) {
-          best = s;
-        }
-      }
-      return best;
-    };
-    const tryScroll = () => {
-      const el = findTarget();
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
-        el.classList.remove("hset-jumped");
-        void el.offsetWidth;
-        el.classList.add("hset-jumped");
-        window.setTimeout(() => el.classList.remove("hset-jumped"), 1400);
-        setPendingAnchor(null);
-        return;
-      }
-      const reg = subRegRef.current;
-      const want = pendingTab.current;
-      if (want && reg && !reg.tabs.some((tab) => tab.id === want)) pendingTab.current = null;
-      else if (want) {
-        if (tries++ < 30) timer = window.setTimeout(tryScroll, 50);
-        else setPendingAnchor(null);
-        return;
-      }
-      if (reg && triedTabs.current.size < reg.tabs.length) {
-        const next = reg.tabs.find((tab) => !triedTabs.current.has(tab.id));
-        if (next) {
-          triedTabs.current.add(next.id);
-          if (next.id !== reg.value) {
-            reg.onChange(next.id);
-            tries = 0;
-            timer = window.setTimeout(tryScroll, 50);
-            return;
-          }
-        }
-      }
-      if (tries++ < 30) timer = window.setTimeout(tryScroll, 50);
-      else {
-        if (restoreTab.current && subRegRef.current) subRegRef.current.onChange(restoreTab.current);
-        setPendingAnchor(null);
-      }
-    };
-    triedTabs.current = new Set();
-    restoreTab.current = pendingTab.current ?? subRegRef.current?.value ?? null;
-    if (subRegRef.current) triedTabs.current.add(subRegRef.current.value);
-    timer = window.setTimeout(tryScroll, 60);
-    return () => window.clearTimeout(timer);
-  }, [active, pendingAnchor]);
+  useSettingsAnchor(scrollRef, subRegRef, pendingAnchor, active, setPendingAnchor);
 
   const saveKey = (which: SavedKey, value: string) => {
     const trimmed = value.trim();
@@ -664,6 +586,19 @@ export function Settings({ visible = true }: { visible?: boolean }) {
     const tid = window.setTimeout(run, 200);
     return () => window.clearTimeout(tid);
   }, [activeGroup]);
+  const activePagePreference = pagePreference(settings.settingsPagePreferences, active);
+
+  const updateActivePagePreference = (patch: Partial<typeof activePagePreference>) => {
+    update({
+      settingsPagePreferences: {
+        ...settings.settingsPagePreferences,
+        [active]: {
+          ...settings.settingsPagePreferences[active],
+          ...patch,
+        },
+      },
+    });
+  };
 
   useEffect(() => {
     if (themeLibOpen) scrollRef.current?.scrollTo({ top: 0 });
@@ -672,176 +607,193 @@ export function Settings({ visible = true }: { visible?: boolean }) {
   const chromeHidden = wide || (active === "relay" && relayMode !== "panel");
 
   return (
-    <SettingsActiveContext.Provider value={{ setActive: handleNav, openPage }}>
-      <PageActionsProvider value={{ reg: pageActions, setReg: setPageActions }}>
-        <SubTabsProvider value={{ section: active, reg: subReg, setReg: setSubReg }}>
-          <div ref={shellRef} className="harbor-settings-shell flex h-full flex-col bg-canvas">
+    <SettingsPageDisplayContext.Provider value={{ compact: activePagePreference.compact }}>
+      <SettingsActiveContext.Provider value={{ setActive: handleNav, openPage }}>
+        <PageActionsProvider value={{ reg: pageActions, setReg: setPageActions }}>
+          <SubTabsProvider value={{ section: active, reg: subReg, setReg: setSubReg }}>
             <div
-              data-tauri-drag-region
-              className="hset-top-space shrink-0"
-              style={{ blockSize: "var(--hset-chrome-h, 92px)" }}
-            />
-            <div className="hset-grid" data-browse-open={compact && browseOpen ? "" : undefined}>
-              <SettingsTools
-                query={query}
-                setQuery={(value) => {
-                  setQuery(value);
-                  if (compact && value.trim()) setBrowseOpen(true);
-                }}
-                onSubmit={handleNav}
+              data-settings-root
+              ref={shellRef}
+              className="harbor-settings-shell flex h-full flex-col bg-canvas"
+            >
+              <div
+                data-tauri-drag-region
+                className="hset-top-space shrink-0"
+                style={{ blockSize: "var(--hset-chrome-h, 92px)" }}
               />
-              <div className="hset-heading">
-                <div className="hset-content">
-                  <h1 ref={titleRef} tabIndex={-1} className="hset-title">
-                    {t(landingGroup?.label ?? SECTION_META[active].label)}
-                  </h1>
-                </div>
-                <button
-                  ref={browseRef}
-                  type="button"
-                  className="hset-browse-toggle"
-                  aria-expanded={browseOpen}
-                  aria-controls="hset-page-navigation"
-                  onClick={() => setBrowseOpen((open) => !open)}
-                >
-                  {browseOpen ? t("Close pages") : t("Browse pages")}
-                </button>
-              </div>
-              <SettingsSidebar
-                active={active}
-                activeTab={subReg?.value ?? null}
-                meta={SECTION_META}
-                query={query}
-                onSelect={selectFromRail}
-                onJump={handleNav}
-              />
-              <main
-                ref={scrollRef}
-                inert={compact && browseOpen}
-                className="hset-main"
-                data-hset-wide={wide ? "" : undefined}
-              >
-                <div className="hset-content">
-                  <Suspense
-                    fallback={
-                      <div
-                        className="h-64 rounded-md bg-elevated"
-                        aria-label={t("Loading settings")}
-                      />
-                    }
+              <div className="hset-grid" data-browse-open={compact && browseOpen ? "" : undefined}>
+                <SettingsTools
+                  query={query}
+                  setQuery={(value) => {
+                    setQuery(value);
+                    if (compact && value.trim()) setBrowseOpen(true);
+                  }}
+                  onSubmit={handleNav}
+                />
+                <div className="hset-heading">
+                  <div className="hset-content">
+                    <h1 ref={titleRef} tabIndex={-1} className="hset-title">
+                      {t(landingGroup?.label ?? SECTION_META[active].label)}
+                    </h1>
+                  </div>
+                  <button
+                    ref={browseRef}
+                    type="button"
+                    className="hset-browse-toggle"
+                    aria-expanded={browseOpen}
+                    aria-controls="hset-page-navigation"
+                    onClick={() => setBrowseOpen((open) => !open)}
                   >
-                    {landingGroup && (
-                      <SectionCards
-                        sections={landingGroup.children}
-                        meta={SECTION_META}
-                        onOpen={(id) => handleNav(id)}
-                      />
-                    )}
-                    <div
-                      key={active}
-                      className={`harbor-cascade flex flex-col ${landingGroup ? "hidden" : ""}`}
-                    >
-                      {active === "basics" && <BasicsPanel />}
-
-                      {active === "account" && <AccountStub />}
-
-                      {active === "library" && (
-                        <LibraryPanel
-                          tmdbDraft={tmdbDraft}
-                          omdbDraft={omdbDraft}
-                          rpdbDraft={rpdbDraft}
-                          fanartDraft={fanartDraft}
-                          tvdbDraft={tvdbDraft}
-                          setTmdbDraft={setTmdbDraft}
-                          setOmdbDraft={setOmdbDraft}
-                          setRpdbDraft={setRpdbDraft}
-                          setFanartDraft={setFanartDraft}
-                          setTvdbDraft={setTvdbDraft}
-                          savedKey={savedKey}
-                          saveKey={saveKey}
-                        />
-                      )}
-
-                      {active === "relay" && (
-                        <RelaySection mode={relayMode} onModeChange={setRelayMode} />
-                      )}
-
-                      {active === "streaming" && (
-                        <StreamingSourcesPanel
-                          rdDraft={rdDraft}
-                          tbDraft={tbDraft}
-                          adDraft={adDraft}
-                          pmDraft={pmDraft}
-                          dlDraft={dlDraft}
-                          setRdDraft={setRdDraft}
-                          setTbDraft={setTbDraft}
-                          setAdDraft={setAdDraft}
-                          setPmDraft={setPmDraft}
-                          setDlDraft={setDlDraft}
-                          savedKey={savedKey}
-                          saveKey={saveKey}
-                        />
-                      )}
-
-                      {active === "streamFilters" && <StreamFiltersPanel />}
-
-                      {active === "p2p" && <P2PPanel />}
-
-                      {active === "plugins" && <PluginsPanel />}
-
-                      {active === "language" && <LanguagePanel />}
-                      {active === "subtitles" && <SubtitlesPanel />}
-
-                      {active === "player" && <QualityPanel />}
-
-                      {active === "mpv" && <MpvPanel />}
-
-                      {active === "anime" && <AnimePanel />}
-
-                      {active === "shaders" && <ShadersPanel />}
-
-                      {active === "playerLayout" && <PlayerLayoutPanel />}
-
-                      {active === "hotkeys" && <HotkeysPanel />}
-
-                      {active === "controllers" && <ControllersPanel />}
-
-                      {active === "theme" && <ThemePanel />}
-
-                      {active === "badges" && <StreamBadgesPanel />}
-                      {active === "awardIcons" && <AwardIconsPanel />}
-
-                      {active === "webhooks" && <WebhooksPanel />}
-
-                      {active === "bug" && <BugReportPanel />}
-                      {active === "support" && <SupportPanel />}
-
-                      {active === "remotes" && <RemotesPanel />}
-
-                      {active === "tv" && <TvPanel />}
-
-                      {active === "bigPicture" && <BigPicturePanel />}
-
-                      {active === "storage" && <StoragePanel />}
-
-                      {active === "trackers" && <TrackersPanel />}
-
-                      {active === "updates" && <UpdatesPanel />}
-
-                      {active === "advanced" && <AdvancedPanel />}
-
-                      {active === "licenses" && <LicensesPanel />}
-                      {active === "icons" && <IconsPanel />}
-                    </div>
-                  </Suspense>
+                    {browseOpen ? t("Close pages") : t("Browse pages")}
+                  </button>
                 </div>
-                {pageActions && !chromeHidden && <SettingsFooter reg={pageActions} />}
-              </main>
+                <SettingsSidebar
+                  active={active}
+                  activeTab={subReg?.value ?? null}
+                  meta={SECTION_META}
+                  query={query}
+                  onSelect={selectFromRail}
+                  onJump={handleNav}
+                />
+                <main
+                  ref={scrollRef}
+                  inert={compact && browseOpen}
+                  className="hset-main"
+                  data-hset-wide={wide ? "" : undefined}
+                >
+                  <div className="hset-content">
+                    {!landing && (
+                      <>
+                        <PagePreferences
+                          value={activePagePreference}
+                          onChange={updateActivePagePreference}
+                        />
+                        {activePagePreference.showIntro && (
+                          <p className="text-ink-muted">{t(SECTION_META[active].sub)}</p>
+                        )}
+                      </>
+                    )}
+                    <Suspense
+                      fallback={
+                        <div
+                          className="h-64 rounded-md bg-elevated"
+                          aria-label={t("Loading settings")}
+                        />
+                      }
+                    >
+                      {landingGroup && (
+                        <SectionCards
+                          sections={landingGroup.children}
+                          meta={SECTION_META}
+                          onOpen={(id) => handleNav(id)}
+                        />
+                      )}
+                      <div
+                        key={active}
+                        className={`harbor-cascade flex flex-col ${landingGroup ? "hidden" : ""}`}
+                      >
+                        {active === "basics" && <BasicsPanel />}
+
+                        {active === "account" && <AccountStub />}
+
+                        {active === "library" && (
+                          <LibraryPanel
+                            tmdbDraft={tmdbDraft}
+                            omdbDraft={omdbDraft}
+                            rpdbDraft={rpdbDraft}
+                            fanartDraft={fanartDraft}
+                            tvdbDraft={tvdbDraft}
+                            setTmdbDraft={setTmdbDraft}
+                            setOmdbDraft={setOmdbDraft}
+                            setRpdbDraft={setRpdbDraft}
+                            setFanartDraft={setFanartDraft}
+                            setTvdbDraft={setTvdbDraft}
+                            savedKey={savedKey}
+                            saveKey={saveKey}
+                          />
+                        )}
+
+                        {active === "relay" && (
+                          <RelaySection mode={relayMode} onModeChange={setRelayMode} />
+                        )}
+
+                        {active === "streaming" && (
+                          <StreamingSourcesPanel
+                            rdDraft={rdDraft}
+                            tbDraft={tbDraft}
+                            adDraft={adDraft}
+                            pmDraft={pmDraft}
+                            dlDraft={dlDraft}
+                            setRdDraft={setRdDraft}
+                            setTbDraft={setTbDraft}
+                            setAdDraft={setAdDraft}
+                            setPmDraft={setPmDraft}
+                            setDlDraft={setDlDraft}
+                            savedKey={savedKey}
+                            saveKey={saveKey}
+                          />
+                        )}
+
+                        {active === "streamFilters" && <StreamFiltersPanel />}
+
+                        {active === "p2p" && <P2PPanel />}
+
+                        {active === "plugins" && <PluginsPanel />}
+
+                        {active === "language" && <LanguagePanel />}
+                        {active === "subtitles" && <SubtitlesPanel />}
+
+                        {active === "player" && <QualityPanel />}
+
+                        {active === "mpv" && <MpvPanel />}
+
+                        {active === "anime" && <AnimePanel />}
+
+                        {active === "shaders" && <ShadersPanel />}
+
+                        {active === "playerLayout" && <PlayerLayoutPanel />}
+
+                        {active === "hotkeys" && <HotkeysPanel />}
+
+                        {active === "controllers" && <ControllersPanel />}
+
+                        {active === "theme" && <ThemePanel />}
+
+                        {active === "badges" && <StreamBadgesPanel />}
+                        {active === "awardIcons" && <AwardIconsPanel />}
+
+                        {active === "webhooks" && <WebhooksPanel />}
+
+                        {active === "bug" && <BugReportPanel />}
+                        {active === "support" && <SupportPanel />}
+
+                        {active === "remotes" && <RemotesPanel />}
+
+                        {active === "tv" && <TvPanel />}
+
+                        {active === "bigPicture" && <BigPicturePanel />}
+
+                        {active === "storage" && <StoragePanel />}
+
+                        {active === "trackers" && <TrackersPanel />}
+
+                        {active === "updates" && <UpdatesPanel />}
+
+                        {active === "advanced" && <AdvancedPanel />}
+
+                        {active === "licenses" && <LicensesPanel />}
+                        {active === "icons" && <IconsPanel />}
+                      </div>
+                    </Suspense>
+                  </div>
+                  {pageActions && !chromeHidden && <SettingsFooter reg={pageActions} />}
+                </main>
+              </div>
+              <BackToTop scrollRef={scrollRef} />
             </div>
-            <BackToTop scrollRef={scrollRef} />
-          </div>
-        </SubTabsProvider>
-      </PageActionsProvider>
-    </SettingsActiveContext.Provider>
+          </SubTabsProvider>
+        </PageActionsProvider>
+      </SettingsActiveContext.Provider>
+    </SettingsPageDisplayContext.Provider>
   );
 }

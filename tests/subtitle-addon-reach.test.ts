@@ -6,6 +6,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { filterTracksByPreferredLanguage, isKnownLanguage } from "../src/lib/subtitles/language.ts";
 import { subtitleLanguage } from "../src/lib/local-library/player-src.ts";
+import { languageName, normalizeSubtitleLang } from "../src/lib/subtitles/language.ts";
 
 const src = readFileSync(
   new URL("../src/lib/subtitles/providers/addons.ts", import.meta.url),
@@ -34,6 +35,20 @@ test("the strict manifest match is still tried first", () => {
 
 test("addons providing no subtitles resource are still excluded", () => {
   assert.match(src, /if \(!declaresSubtitles\(addon\)\) return null;/);
+});
+
+test("valid addon subtitles survive missing and generic language metadata", () => {
+  assert.doesNotMatch(src, /!isPlausibleLang\(s\.lang\)/);
+  assert.match(src, /normalizeSubtitleLang\(s\.lang \?\? s\.language\)/);
+  assert.equal(normalizeSubtitleLang(undefined), "und");
+  assert.equal(normalizeSubtitleLang("translation"), "und");
+  assert.equal(normalizeSubtitleLang("hun"), "hu");
+  assert.equal(normalizeSubtitleLang("magyar"), "hu");
+  assert.equal(normalizeSubtitleLang("Fordítás: magyar"), "hu");
+  assert.equal(normalizeSubtitleLang("Felirat-eszköztár"), "und");
+  assert.equal(normalizeSubtitleLang("multilingual"), "multi");
+  assert.equal(languageName("und"), "Unknown");
+  assert.equal(languageName("multi"), "Multi");
 });
 
 const modal = readFileSync(
@@ -120,7 +135,7 @@ test("an enriched addon timeout still falls back to the standard subtitle endpoi
     src.indexOf("export async function searchAddons"),
   );
   assert.match(call, /enrichedBudget/);
-  assert.match(call, /retrying without stream hints/);
+  assert.match(call, /also checking without stream hints/);
   assert.match(call, /const bareUrl = `\$\{base\}\/subtitles\/\$\{type\}\/\$\{id\}\.json`/);
   assert.ok(
     call.indexOf("withSubtitleTimeout(") < call.indexOf("const bareUrl"),
@@ -128,8 +143,18 @@ test("an enriched addon timeout still falls back to the standard subtitle endpoi
   );
 });
 
-test("automatic subtitle loading limits each preferred language independently", () => {
-  assert.match(fetchIntoPlayer, /const EXTRA_TRACKS_PER_LANGUAGE = 15/);
+test("a non-empty enriched response cannot hide an addon's standard translation results", () => {
+  const call = src.slice(
+    src.indexOf("async function callOne"),
+    src.indexOf("export async function searchAddons"),
+  );
+  assert.doesNotMatch(call, /if \(enriched\.length > 0\) return enriched/);
+  assert.match(call, /for \(const subtitle of \[\.\.\.enriched, \.\.\.bare\]\)/);
+  assert.match(call, /return merged/);
+});
+
+test("automatic subtitle loading limits each visible language independently", () => {
+  assert.match(fetchIntoPlayer, /const EXTRA_TRACKS_PER_LANGUAGE = 40/);
   assert.match(fetchIntoPlayer, /spreadBySourcePerLanguage\(/);
   assert.match(
     fetchIntoPlayer,

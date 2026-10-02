@@ -24,6 +24,8 @@ import { useMobileRemote } from "./mobile-remote";
 import { LocalLibraryBrand } from "@/components/local-library-brand";
 import { MediaServerBrand } from "@/components/media-server-brand";
 import type { MediaServerProvider } from "@/lib/media-server/types";
+import { mergePreferredMeta } from "@/lib/preferred-meta";
+import { usePreferredMeta } from "@/lib/use-preferred-meta";
 
 const prefersReducedMotion = () =>
   typeof window !== "undefined" &&
@@ -805,6 +807,7 @@ function CollectionsBrowser({
   onOpenDetail: (m: Meta) => void;
 }) {
   const t = useT();
+  const { settings } = useSettings();
   const [list, setList] = useState<Meta[] | null>(null);
   const [active, setActive] = useState<Meta | null>(null);
   const [members, setMembers] = useState<Meta[] | null>(null);
@@ -814,7 +817,9 @@ function CollectionsBrowser({
     setList(null);
     (async () => {
       try {
-        const cats = await listBrowseCatalogs(authKey);
+        const cats = await listBrowseCatalogs(authKey, {
+          pluginRows: settings.pluginsOutsideTab,
+        });
         const wanted = cats.filter((c) =>
           isCollectionCatalog({ type: c.type, id: c.id, name: c.name }),
         );
@@ -839,7 +844,7 @@ function CollectionsBrowser({
     return () => {
       alive = false;
     };
-  }, [authKey]);
+  }, [authKey, settings.pluginsOutsideTab]);
 
   const openCollection = async (meta: Meta) => {
     setActive(meta);
@@ -918,6 +923,8 @@ function GridTile({ meta, onOpenDetail }: { meta: Meta; onOpenDetail: (m: Meta) 
     const found = snapshot.library?.mediaServers?.find((item) => item.id === meta.id);
     return found?.mediaServerProviders ?? [];
   }, [snapshot.library?.mediaServers, meta.id]);
+  const preferredMeta = usePreferredMeta(meta);
+  const displayMeta = mergePreferredMeta(meta, preferredMeta);
   const { src, onError } = usePosterChain(
     settings.rpdbKey,
     meta.id,
@@ -927,7 +934,7 @@ function GridTile({ meta, onOpenDetail }: { meta: Meta; onOpenDetail: (m: Meta) 
   return (
     <button
       type="button"
-      onClick={() => onOpenDetail(meta)}
+      onClick={() => onOpenDetail(displayMeta)}
       className="text-start transition-transform duration-150 active:scale-[0.96] motion-reduce:transition-none"
     >
       <div className="relative overflow-hidden rounded-[12px]">
@@ -954,7 +961,7 @@ function GridTile({ meta, onOpenDetail }: { meta: Meta; onOpenDetail: (m: Meta) 
         )}
       </div>
       <p className="mt-1.5 line-clamp-2 text-[12px] font-medium leading-snug text-ink-muted">
-        {meta.name}
+        {displayMeta.name}
       </p>
     </button>
   );

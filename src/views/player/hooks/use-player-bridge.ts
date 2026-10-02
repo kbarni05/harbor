@@ -17,11 +17,12 @@ import {
 import type { PlayerSrc } from "@/lib/view";
 import type { Settings } from "@/lib/settings";
 import { setPlaybackClock, setPlaybackStatus } from "@/lib/player/playback-clock";
-import { isLinuxDesktop, isWindowsDesktop } from "@/lib/platform";
+import { isLinuxDesktop, isMacDesktop, isWindowsDesktop } from "@/lib/platform";
 import { isLivePlaybackSrc } from "@/lib/player/live-src";
 import { svpEnsureRunning, svpStatus } from "@/lib/svp";
 import { isSvpActiveForMedia } from "@/lib/player/svp-policy";
 import { pickBridge } from "../player-utils";
+import { effectiveHdrToSdr } from "@/lib/player/hdr-output-policy";
 
 function snapChangedIgnoringClock(a: PlayerSnapshot, b: PlayerSnapshot): boolean {
   return (
@@ -29,6 +30,7 @@ function snapChangedIgnoringClock(a: PlayerSnapshot, b: PlayerSnapshot): boolean
     a.buffering !== b.buffering ||
     a.firstFrameReady !== b.firstFrameReady ||
     a.durationSec !== b.durationSec ||
+    a.buffering !== b.buffering ||
     a.volume !== b.volume ||
     a.muted !== b.muted ||
     a.rate !== b.rate ||
@@ -46,7 +48,8 @@ function snapChangedIgnoringClock(a: PlayerSnapshot, b: PlayerSnapshot): boolean
     a.videoHeight !== b.videoHeight ||
     a.hdrGamma !== b.hdrGamma ||
     a.errorMessage !== b.errorMessage ||
-    a.errorCode !== b.errorCode
+    a.errorCode !== b.errorCode ||
+    a.noAudio !== b.noAudio
   );
 }
 
@@ -64,6 +67,7 @@ export function usePlayerBridge(params: {
   const [autoFallbackTried, setAutoFallbackTried] = useState(false);
 
   const hdrOpaqueWindow = isWindowsDesktop() && settings.playerHdrOpaqueWindow;
+  const hdrToSdr = effectiveHdrToSdr(settings);
   const embedActive = settings.playerMpvEmbed && !hdrOpaqueWindow;
   const isAnimeSrc = metaIsAnime(src.meta) || !!src.isAnime;
   const anime4kOn = settings.playerAnime4k && (!settings.playerAnime4kAnimeOnly || isAnimeSrc);
@@ -114,19 +118,22 @@ export function usePlayerBridge(params: {
         const el = videoMountRef.current;
         if (!el) return null;
         const r = el.getBoundingClientRect();
+        const doc = document.documentElement;
+        const view = doc.getBoundingClientRect();
+        const usable = view.width > 0 && view.height > 0;
         return {
-          cssLeft: r.left,
-          cssTop: r.top,
+          cssLeft: usable ? r.left - view.left : r.left,
+          cssTop: usable ? r.top - view.top : r.top,
           cssWidth: r.width,
           cssHeight: r.height,
-          cssViewW: document.documentElement.clientWidth,
-          cssViewH: document.documentElement.clientHeight,
+          cssViewW: usable ? view.width : doc.clientWidth,
+          cssViewH: usable ? view.height : doc.clientHeight,
         };
       };
       const { bridge: choose, engine: chosen } = await pickBridge(want, src.notWebReady === true, {
         anime4k: anime4kOn,
-        hdrToSdr: settings.playerHdrToSdr,
-        rtxHdr: settings.playerRtxHdr && !settings.playerHdrToSdr && !svpOn,
+        hdrToSdr,
+        rtxHdr: settings.playerRtxHdr && !hdrToSdr && !svpOn,
         rtxVsr: settings.playerRtxVsr && !svpOn,
         embed: embedActive,
         d3d11Flip: settings.playerD3d11Flip,
@@ -140,8 +147,9 @@ export function usePlayerBridge(params: {
           ),
           ...generalShaderChain(settings),
         ],
-        macEdr: false,
+        macEdr: isMacDesktop() && embedActive && settings.playerMacEdr && !settings.playerHdrToSdr,
         fullDownload: settings.torrentFullDownload,
+        cacheDir: settings.playbackCacheDir,
         extraOptions: [mergeMpvOptions(settings, svpOn), shaderCompanionOptions(settings)]
           .filter(Boolean)
           .join("\n"),
@@ -187,11 +195,8 @@ export function usePlayerBridge(params: {
 
   useEffect(() => {
     if (!bridgeReady || engine !== "mpv") return;
-    bridgeRef.current?.setHdrToSdr?.(
-      settings.playerHdrToSdr,
-      settings.playerDisplayPanel === "oled",
-    );
-  }, [bridgeReady, engine, settings.playerHdrToSdr, settings.playerDisplayPanel, bridgeRef]);
+    bridgeRef.current?.setHdrToSdr?.(hdrToSdr, settings.playerDisplayPanel === "oled");
+  }, [bridgeReady, engine, hdrToSdr, settings.playerDisplayPanel, bridgeRef]);
 
-  return { snap, engine, bridgeReady, bridgeKey, embedActive, svpActive: svpOn };
+  return { snap, engine, bridgeReady, bridgeKey, embedActive, svpActive: svpOn, hdrToSdr };
 }

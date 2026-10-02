@@ -20,8 +20,10 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const BUCKET_SECONDS: f64 = 2.0;
 const THUMB_WIDTH: u32 = 240;
 const SCREENSHOT_QUALITY: u32 = 72;
-const REQUEST_TIMEOUT_MS: u64 = 12000;
-const SEEK_WAIT_MS: u64 = 4000;
+const REQUEST_TIMEOUT_MS: u64 = 5000;
+const SEEK_WAIT_MS: u64 = 1200;
+const HDR_PROBE_TIMEOUT_MS: u64 = 1200;
+const SHADOW_STARTUP_CHECK_DELAY: Duration = Duration::from_millis(40);
 const SHADOW_QUIT_GRACE: Duration = Duration::from_millis(80);
 const SHADOW_KILL_WAIT: Duration = Duration::from_secs(2);
 const THUMB_CACHE_MAX_BYTES: usize = 48 * 1024 * 1024;
@@ -187,6 +189,11 @@ pub(crate) fn locate_mpv() -> Option<PathBuf> {
         candidates.push("mpv.exe".into());
         candidates.push("mpv".into());
     } else if cfg!(target_os = "macos") {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                candidates.push(dir.join("mpv").to_string_lossy().into_owned());
+            }
+        }
         candidates.push("/opt/homebrew/bin/mpv".into());
         candidates.push("/usr/local/bin/mpv".into());
         candidates.push("mpv".into());
@@ -580,13 +587,17 @@ async fn is_hdr_source(url: &str) -> bool {
     {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
+    cmd.kill_on_drop(true);
     crate::proc_guard::configure_command(&mut cmd);
-    let probe = tokio::time::timeout(Duration::from_secs(8), cmd.output()).await;
+    let probe =
+        tokio::time::timeout(Duration::from_millis(HDR_PROBE_TIMEOUT_MS), cmd.output()).await;
     let Ok(Ok(out)) = probe else {
         return false;
     };
-    let s = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
-    s.contains("smpte2084") || s.contains("arib-std-b67") || s.contains("bt2020")
+    let trc = String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .to_ascii_lowercase();
+    trc.contains("smpte2084") || trc.contains("arib-std-b67")
 }
 
 fn thumb_filter(hdr: bool) -> String {
@@ -645,7 +656,7 @@ async fn spawn_shadow(url: &str, session: &str, pending: Pending) -> Result<Shad
     let mut child = cmd.spawn().map_err(|e| format!("spawn shadow: {}", e))?;
     crate::proc_guard::adopt(&child);
 
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    tokio::time::sleep(SHADOW_STARTUP_CHECK_DELAY).await;
     if let Some(status) = child
         .try_wait()
         .map_err(|e| format!("check shadow process: {e}"))?

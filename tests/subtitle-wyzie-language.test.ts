@@ -19,6 +19,6 @@ test("Wyzie uses a known display language instead of inventing English", async (
   );
   assert.deepEqual(
     results.map((r) => r.lang),
-    ["ar", "ar", "", "en"],
+    ["ar", "ar", "und", "en"],
   );
 });

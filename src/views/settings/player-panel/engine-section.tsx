@@ -1,6 +1,6 @@
 import { AlertTriangle } from "../icons";
 import { useEffect, useState } from "react";
-import { isWindowsDesktop } from "@/lib/platform";
+import { isMacDesktop, isWindowsDesktop } from "@/lib/platform";
 import { probeMpv, type MpvProbe } from "@/lib/player/mpv";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
@@ -28,6 +28,10 @@ export function PlayerEnginePanel() {
     };
   }, []);
 
+  const macEdrSub = t(
+    "Sends HDR to the display through macOS EDR instead of mapping it down to SDR. Needs HDR-to-SDR tonemapping off, mpv embedded, and a display with HDR headroom. Takes effect on the next video. Experimental: color can look flat, and an SDR video after an HDR one may need a window resize.",
+  );
+
   const choices: Array<{
     id: "auto" | "html5" | "mpv";
     label: string;
@@ -37,7 +41,9 @@ export function PlayerEnginePanel() {
     {
       id: "auto",
       label: t("Auto"),
-      sub: t("mpv on the desktop app, HTML5 in the browser. The right engine without thinking about it."),
+      sub: t(
+        "mpv on the desktop app, HTML5 in the browser. The right engine without thinking about it.",
+      ),
       recommended: true,
     },
     {
@@ -68,13 +74,19 @@ export function PlayerEnginePanel() {
           ))}
           <ToggleRow
             label={t("Embed mpv inside Harbor window")}
-            sub={t("Renders mpv inline so playback lives in Harbor itself. Turn off to open it in a separate window instead.")}
+            sub={t(
+              "Renders mpv inline so playback lives in Harbor itself. Turn off to open it in a separate window instead.",
+            )}
             value={settings.playerMpvEmbed}
             onChange={(v) => update({ playerMpvEmbed: v })}
           />
           {mpvProbe && !mpvProbe.available && (
             <div className="flex items-start gap-2.5 rounded-[10px] bg-elevated px-4 py-3">
-              <AlertTriangle size={18} strokeWidth={2.2} className="mt-[2px] shrink-0 text-danger" />
+              <AlertTriangle
+                size={18}
+                strokeWidth={2.2}
+                className="mt-[2px] shrink-0 text-danger"
+              />
               <span className="flex min-w-0 flex-1 flex-col gap-2">
                 <span className={`max-w-[66ch] ${ROW_DESC}`}>
                   {t(
@@ -99,14 +111,28 @@ export function PlayerEnginePanel() {
               label={t("HDR-to-SDR tonemapping")}
               sub={t("Maps HDR sources to SDR using bt.2446a. Recommended on SDR displays.")}
               value={settings.playerHdrToSdr}
-              onChange={(v) => update({ playerHdrToSdr: v })}
+              onChange={(v) => update({ playerHdrAuto: false, playerHdrToSdr: v })}
             />
+            {isMacDesktop() && (
+              <ToggleRow
+                label={t("True HDR, embedded")}
+                sub={macEdrSub}
+                lockReason={settings.playerHdrToSdr ? macEdrSub : undefined}
+                value={settings.playerMacEdr}
+                onChange={(v) => update({ playerMacEdr: v })}
+              />
+            )}
             <DisplayPanelSelector />
           </SettingGroup>
         )}
 
         <SettingGroup label={t("Casting")}>
-          <SettingRow label={t("Device compatibility")} desc={t("Harbor checks the receiving device and uses ffmpeg when the stream needs conversion.")}>
+          <SettingRow
+            label={t("Device compatibility")}
+            desc={t(
+              "Harbor checks the receiving device and uses ffmpeg when the stream needs conversion.",
+            )}
+          >
             <span className="text-[15px] text-ink-muted">{t("Automatic")}</span>
           </SettingRow>
         </SettingGroup>
@@ -119,7 +145,9 @@ export function PlayerEnginePanel() {
           <SettingGroup label={t("Picture")}>
             <ToggleRow
               label={t("Line-free video mode")}
-              sub={t("Forces a compatibility present mode that removes a thin bright line some monitors show at the screen edge. Side effects: 4K playback can drop to a slideshow and HDR content looks dimmer, because this mode bypasses the HDR display path. Leave off unless you see that line. Restart playback to apply.")}
+              sub={t(
+                "Forces a compatibility present mode that removes a thin bright line some monitors show at the screen edge. Side effects: 4K playback can drop to a slideshow and HDR content looks dimmer, because this mode bypasses the HDR display path. Leave off unless you see that line. Restart playback to apply.",
+              )}
               value={settings.playerD3d11Flip}
               onChange={(v) => update({ playerD3d11Flip: v })}
             />

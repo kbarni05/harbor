@@ -5,7 +5,9 @@ import { writePlayerVolume } from "@/lib/player-volume";
 import { effectiveBinding, eventToBinding, isTypingTarget, type HotkeyId } from "@/lib/hotkeys";
 import { isWindowsDesktop } from "@/lib/platform";
 import { isRtxHdrBlocked, isRtxVsrBlocked } from "@/lib/player/rtx-video-policy";
+import { effectiveHdrToSdr } from "@/lib/player/hdr-output-policy";
 import { mediaKeyGate } from "@/lib/media-session";
+import { setVideoOwnsMediaKeys } from "@/lib/player/media-key-owner";
 import { useSettings } from "@/lib/settings";
 import { isAnyFullscreen, exitAnyFullscreen } from "@/lib/fullscreen-state";
 import { isBigPictureActive } from "@/lib/big-picture";
@@ -346,7 +348,7 @@ export function useKeyboardShortcuts(params: {
       if (match("playerRtxHdrToggle")) {
         e.preventDefault();
         if (e.repeat) return;
-        if (!isWindowsDesktop() || isRtxHdrBlocked(settings.playerHdrToSdr, svpActive)) return;
+        if (!isWindowsDesktop() || isRtxHdrBlocked(effectiveHdrToSdr(settings), svpActive)) return;
         if (bridgeRef.current?.capabilities().engine !== "mpv") return;
         update({ playerRtxHdr: !settings.playerRtxHdr });
         return;
@@ -582,6 +584,7 @@ export function useKeyboardShortcuts(params: {
     settings.playerEscExitsFullscreen,
     settings.playerConfirmLeave,
     settings.playerVolumeSfx,
+    settings.playerHdrAuto,
     settings.playerHdrToSdr,
     settings.playerRtxHdr,
     settings.playerRtxVsr,
@@ -591,6 +594,7 @@ export function useKeyboardShortcuts(params: {
 
   useEffect(() => {
     if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
+    setVideoOwnsMediaKeys(true);
     let dead = false;
     let cleanup: (() => void) | undefined;
     void import("@tauri-apps/api/event").then(async ({ listen }) => {
@@ -651,6 +655,7 @@ export function useKeyboardShortcuts(params: {
     });
     return () => {
       dead = true;
+      setVideoOwnsMediaKeys(false);
       cleanup?.();
     };
   }, []);

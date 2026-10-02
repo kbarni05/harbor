@@ -170,15 +170,21 @@ export function useSkipSegments(
 
   return useMemo(() => {
     const base = mergeSegments([adSegments, aniSkip, skipDb, introDb, introDbApp, fromChapters]);
-    if (durationSec <= 0) return base;
+    const valid = base.filter((s) => {
+      const len = s.endSec - s.startSec;
+      return (
+        Number.isFinite(s.startSec) &&
+        Number.isFinite(s.endSec) &&
+        s.startSec >= 0 &&
+        len >= 2 &&
+        len <= MAX_SEGMENT_SEC
+      );
+    });
+    if (durationSec <= 0) return valid;
     const minOutroStart = durationSec * MIN_OUTRO_START_FRACTION;
-    return base
+    return valid
       .filter((s) => s.startSec < durationSec)
       .map((s) => (s.endSec > durationSec ? { ...s, endSec: durationSec } : s))
-      .filter((s) => {
-        const len = s.endSec - s.startSec;
-        return len >= 2 && len <= MAX_SEGMENT_SEC;
-      })
       .filter((s) => s.kind !== "outro" || s.startSec >= minOutroStart);
   }, [aniSkip, skipDb, introDb, introDbApp, fromChapters, durationSec, adSegments]);
 }
@@ -199,7 +205,7 @@ export function useAdSegments(
     setSegs([]);
     if (!enabled) return;
     let cancelled = false;
-    fetchAdSegments(fp.content, fp.source, true)
+    fetchAdSegments(fp.content, fp.source)
       .then((s) => {
         if (!cancelled) setSegs(s);
       })
@@ -211,10 +217,7 @@ export function useAdSegments(
   return segs;
 }
 
-export function activeSegment(
-  segments: SkipSegment[],
-  positionSec: number,
-): SkipSegment | null {
+export function activeSegment(segments: SkipSegment[], positionSec: number): SkipSegment | null {
   for (const s of segments) {
     if (positionSec >= s.startSec && positionSec < s.endSec - 0.75) return s;
   }
@@ -256,6 +259,9 @@ export function prefetchSegments(meta: Meta, episode?: PlayEpisode): void {
         : resolvedExternalId && resolvedExternalId.startsWith("tt")
           ? resolvedExternalId
           : null;
-    if (tt && ep) fetchIntroDbAppSegments(tt, ep).catch(() => {});
+    if (tt) {
+      fetchSkipDbSegments(tt, ep, 0).catch(() => {});
+      if (ep) fetchIntroDbAppSegments(tt, ep).catch(() => {});
+    }
   }
 }

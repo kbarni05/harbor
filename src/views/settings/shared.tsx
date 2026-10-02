@@ -61,6 +61,8 @@ export const SettingsActiveContext = createContext<{
   openPage: (s: SectionId, tab?: string) => void;
 } | null>(null);
 
+export const SettingsPageDisplayContext = createContext({ compact: false });
+
 export function useSettingsActiveContext() {
   const v = useContext(SettingsActiveContext);
   if (!v) throw new Error("SettingsActiveContext missing");
@@ -281,6 +283,7 @@ export function Section({
   const flags = useMemo(() => ({ multiGroup }), [multiGroup]);
   const showHeading = !bare && !echo;
 
+  const { compact } = useContext(SettingsPageDisplayContext);
   return (
     <SectionRegistryContext.Provider value={registry}>
       <SectionFlagsContext.Provider value={flags}>
@@ -289,7 +292,7 @@ export function Section({
           className={
             bare
               ? "scroll-mt-[72px]"
-              : "harbor-settings-section scroll-mt-[72px] flex flex-col gap-[11px]"
+              : `harbor-settings-section scroll-mt-[72px] flex flex-col ${compact ? "gap-2" : "gap-[11px]"}`
           }
         >
           {showHeading && (

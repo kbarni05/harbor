@@ -1,4 +1,4 @@
-import { Music2, Plus, X } from "lucide-react";
+import { Music2, Plus, X } from "@/components/icons/music-icons";
 import { hideMusicRecent, isMusicRecentHidden } from "@/lib/music/hidden-recents";
 import { MusicTrackMixChip, MusicTrackPlaylistChip } from "@/components/music/music-playlist-chip";
 import { MusicMediaBadge } from "@/components/music/music-media-badge";
@@ -10,6 +10,7 @@ import { favoriteArtists } from "@/lib/music/sources";
 import type { MusicArtistRef, MusicCatalogItem, MusicTrack } from "@/lib/music/types";
 import { localRow, trackItem, type MusicBand, type MusicBandContext } from "./music-band-types";
 import { recentContextsBand } from "./music-recent-contexts-band";
+import { MusicFreshRow } from "./music-fresh-row";
 
 function artistRefs(ctx: MusicBandContext): MusicArtistRef[] {
   const t = ctx.t;
@@ -191,26 +192,18 @@ function freshBand(ctx: MusicBandContext): MusicBand | null {
           row={{ ...charts, title, titleLiteral: true, layout: "trackGrid" }}
           count={9}
           numbered
-          onPlay={(item) => ctx.openItem(item, items)}
+          onOpen={(item) => ctx.openItem(item, items)}
         />
       ),
     };
   }
   if (ctx.player.recents.length === 0) return null;
-  const items = ctx.data.fresh.map(trackItem);
   return {
     key: "fresh",
     title: t("music.row.fresh"),
     catalog: false,
     render: (title) => (
-      <MusicCatalogRow
-        row={localRow("fresh", title, t("music.row.freshSubtitle"), "trackGrid", items)}
-        status={ctx.data.freshStatus}
-        error={ctx.data.freshError}
-        onRetry={ctx.data.reload}
-        count={9}
-        onPlay={(item) => ctx.openItem(item, items)}
-      />
+      <MusicFreshRow title={title} data={ctx.data} onOpen={ctx.openItem} />
     ),
   };
 }
@@ -318,6 +311,10 @@ function playlistsBand(ctx: MusicBandContext): MusicBand {
           status={ctx.data.libraryStatus === "loading" ? "loading" : "ready"}
           leadingCard={tile}
           onOpen={(item) => ctx.openLibrary({ view: "playlists", playlistId: item.id })}
+          onPlay={(_item, index) => {
+            const tracks = playlists[index]?.tracks ?? [];
+            if (tracks[0]) ctx.playTrack(tracks[0], tracks);
+          }}
           onViewAll={() => ctx.openLibrary({ view: "playlists" })}
         />
       ),

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SportsDockControls } from "./sports/dock-controls";
+import { useDockDrag } from "./sports/use-dock-drag";
 import { EmbeddedBroadcastPlayer } from "./sports/embedded-broadcast-player";
 import { resolveChromeTheme } from "@/lib/theme";
 import { useBigPicture } from "@/lib/big-picture";
 import { useActiveKid } from "@/lib/profiles";
-import { type PlayerBridge } from "@/lib/player/bridge";
+import { type PlayerBridge, type PlayerSnapshot } from "@/lib/player/bridge";
 import { useDebridClients } from "@/lib/debrid/registry";
 import { useSettings } from "@/lib/settings";
 import { writePlayerVolume } from "@/lib/player-volume";
@@ -96,6 +97,7 @@ import { StillWatchingPrompt } from "./player/still-watching-prompt";
 import { SourceErrorCard } from "./player/source-error-card";
 import { LeaveConfirmModal } from "@/components/player/leave-confirm-modal";
 import { HdrStageBridge } from "./player/hdr-stage-bridge";
+import type { HdrStagePayload } from "./hdr-overlay-app";
 import { setSkipSegmentsView } from "@/lib/skip-intro/segment-store";
 import { markStreamDead, STUB_TTL_MS } from "@/lib/dead-streams";
 import type { VolumeIndicatorState } from "@/components/player/volume-indicator";
@@ -111,6 +113,30 @@ import { isNextAired } from "@/lib/cw-resurface";
 import { exitAnyFullscreen } from "@/lib/fullscreen-state";
 
 let hdrFallbackNoticeShown = false;
+
+function useHdrChromeSnapshot(snap: PlayerSnapshot): PlayerSnapshot {
+  const candidate = useMemo(
+    () => ({
+      ...snap,
+      // These high-frequency fields are either read from the playback clock
+      // by the transport or rendered natively by mpv in embedded HDR mode.
+      // Keeping them out of the cross-window payload prevents every subtitle
+      // cue from repainting a full-screen transparent WebView over 4K video.
+      positionSec: 0,
+      bufferedSec: 0,
+      subText: "",
+      subStartSec: 0,
+      secondarySubText: "",
+    }),
+    [snap],
+  );
+  const stableRef = useRef(candidate);
+  const keys = Object.keys(candidate) as Array<keyof PlayerSnapshot>;
+  if (keys.some((key) => stableRef.current[key] !== candidate[key])) {
+    stableRef.current = candidate;
+  }
+  return stableRef.current;
+}
 
 export function PlayerView({ src }: { src: PlayerSrc }) {
   return src.officialBroadcast ? (
@@ -128,6 +154,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     exitPlayback,
     replacePlayerSrc,
     exitPlayer,
+    setPipDocked,
     picker,
   } = useView();
   const docked = !!src.sportsDocked;
@@ -184,16 +211,19 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     hostSource,
   } = useTogether();
   const stageRef = useRef<HTMLDivElement>(null);
+  const refreshDockGeometry = useCallback(() => window.dispatchEvent(new Event("harbor:mpv-refresh-geom")), []);
+  const dockDrag = useDockDrag(stageRef, docked, refreshDockGeometry);
   const videoMountRef = useRef<HTMLDivElement>(null);
   const bridgeRef = useRef<PlayerBridge | null>(null);
   const selfFrameReadyRef = useRef(false);
   const { fullscreen, toggleFullscreen } = useFullscreen();
-  const { snap, engine, bridgeReady, bridgeKey, embedActive, svpActive } = usePlayerBridge({
-    bridgeRef,
-    videoMountRef,
-    src,
-    settings,
-  });
+  const { snap, engine, bridgeReady, bridgeKey, embedActive, svpActive, hdrToSdr } =
+    usePlayerBridge({
+      bridgeRef,
+      videoMountRef,
+      src,
+      settings,
+    });
   const nativeDock = docked && engine === "mpv" && embedActive;
   useSportsDockSurface(nativeDock && !dockMinimized, videoMountRef);
   const isP2pEngine =
@@ -246,7 +276,14 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
   );
   const [hasStarted, setHasStarted] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const { pipMode, togglePipMode, exitPip } = usePipMode({ bridgeRef, setChromeHidden });
+  // Detached PiP keeps this view mounted so the session survives, and only yields the
+  // page underneath, the way a docked sports broadcast already does.
+  const { pipMode, togglePipMode, exitPip } = usePipMode({
+    bridgeRef,
+    setChromeHidden,
+    onDetach: () => setPipDocked(true),
+    onReattach: () => setPipDocked(false),
+  });
   const { slowLoad, transcodedUrl, sourceError, clearSourceError } = useAutoRetry({
     bridgeRef,
     src,
@@ -767,8 +804,10 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
   }, [showSyncToast, t]);
   const handleEnterSync = useCallback(() => {
     suspendAutoSyncForManualTiming();
-    void textSync.enter(src.url, src.headers);
-  }, [textSync.enter, src.url, src.headers, suspendAutoSyncForManualTiming]);
+    void textSync.enter(src.url, src.headers).then((reason) => {
+      if (reason) showSyncToast("error", t("Could not open Live Sync: {reason}", { reason }));
+    });
+  }, [textSync.enter, src.url, src.headers, suspendAutoSyncForManualTiming, showSyncToast, t]);
 
   const volumeIndicatorTimerRef = useRef<number | null>(null);
   const [volumeIndicator, setVolumeIndicator] = useState<VolumeIndicatorState>({
@@ -801,7 +840,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
 
   const videoFill = useVideoFill(bridgeRef, src.url, playing);
   useLivePictureEq(bridgeRef, src.url);
-  const anime4k = useAnime4k(bridgeRef, src.url, src, snap.videoWidth);
+  const anime4k = useAnime4k(bridgeRef, src.url, src, snap.videoWidth, bridgeReady);
   const [mouseHoldSpeedActive, setMouseHoldSpeedActive] = useState(false);
   const mouseHoldRef = useRef<{
     pointerId: number | null;
@@ -1011,6 +1050,10 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
   });
 
   useEffect(() => {
+    if (snap.status === "idle" || snap.status === "ended" || snap.status === "error") {
+      clearMediaControls();
+      return;
+    }
     const ep = src.episode;
     const subtitle = ep ? `S${ep.season} E${ep.episode}${ep.name ? ` · ${ep.name}` : ""}` : "";
     const artUrl = src.episode?.still || src.meta.background || src.meta.poster || null;
@@ -1022,6 +1065,10 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     const unsub = subscribePlaybackClock(() => {
       const livePos = getPlaybackPosition();
       const currentSnap = snapRef.current;
+      if (currentSnap.status === "idle" || currentSnap.status === "ended" || currentSnap.status === "error") {
+        clearMediaControls();
+        return;
+      }
       const playingNow =
         currentSnap.status === "playing" && (currentSnap.firstFrameReady || livePos > 0.3);
       updateMediaControls(
@@ -1186,7 +1233,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     embedActive,
     hdrGamma: snap.hdrGamma,
     playerHdrStage: docked ? "off" : settings.playerHdrStage,
-    playerHdrToSdr: settings.playerHdrToSdr,
+    playerHdrToSdr: hdrToSdr,
     onFallback: () => {
       if (hdrFallbackNoticeShown) return;
       hdrFallbackNoticeShown = true;
@@ -1231,6 +1278,45 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
       : snap;
   if (showChrome) shellSnapRef.current = liveShellSnap;
   const shellSnap = showChrome ? liveShellSnap : shellSnapRef.current;
+  const hdrChromeSnap = useHdrChromeSnapshot(snap);
+  const hdrStagePayload = useMemo<HdrStagePayload>(
+    () => ({
+      snap: hdrChromeSnap,
+      src,
+      shellId: settings.playerShellId,
+      engine,
+      visible: showChrome,
+      fullscreen,
+      resolvedImdbId,
+      tmdbKey: settings.tmdbKey ?? null,
+      canChangeEpisode,
+      hasPrevEp: hasPrevEpisodeNow,
+      hasNextEp: hasNextEpisodeNow,
+      pipMode,
+      screenLocked,
+      screenLockEnabled,
+      screenLockControlsVisible,
+      screenLockBinding,
+    }),
+    [
+      hdrChromeSnap,
+      src,
+      settings.playerShellId,
+      settings.tmdbKey,
+      engine,
+      showChrome,
+      fullscreen,
+      resolvedImdbId,
+      canChangeEpisode,
+      hasPrevEpisodeNow,
+      hasNextEpisodeNow,
+      pipMode,
+      screenLocked,
+      screenLockEnabled,
+      screenLockControlsVisible,
+      screenLockBinding,
+    ],
+  );
   const volumeRef = useRef(snap.volume);
   useEffect(() => {
     volumeRef.current = snap.volume;
@@ -1447,7 +1533,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
       data-audio-only={docked && dockMinimized}
       dir="ltr"
       className={`fixed z-[100] overflow-hidden ${docked ? "sports-player-dock" : "inset-0"} ${stageBg}`}
-      style={screenLocked ? { cursor: "default" } : cursorStyle}
+      style={{ ...(screenLocked ? { cursor: "default" } : cursorStyle), ...dockDrag.style }}
       onMouseMove={wakeChrome}
       onMouseEnter={wakeChrome}
     >
@@ -1523,6 +1609,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
       />
       {docked && (
         <SportsDockControls
+          dragHandlers={dockDrag.handlers}
           src={src}
           snap={snap}
           bridge={bridgeRef.current}
@@ -1580,24 +1667,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
       {!tenFoot && <LeaveConfirmModal />}
       <HdrStageBridge
         active={hdrStageRequested}
-        payload={{
-          snap,
-          src,
-          shellId: settings.playerShellId,
-          engine,
-          visible: showChrome,
-          fullscreen,
-          resolvedImdbId,
-          tmdbKey: settings.tmdbKey ?? null,
-          canChangeEpisode,
-          hasPrevEp: hasPrevEpisodeNow,
-          hasNextEp: hasNextEpisodeNow,
-          pipMode,
-          screenLocked,
-          screenLockEnabled,
-          screenLockControlsVisible,
-          screenLockBinding,
-        }}
+        payload={hdrStagePayload}
         handlers={{
           playPause: playPauseToggle,
           fullscreen: toggleFullscreen,

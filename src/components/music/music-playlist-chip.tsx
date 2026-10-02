@@ -1,13 +1,15 @@
-import { useState } from "react";
-import { ListMusic } from "lucide-react";
+import { lazy, Suspense, useState } from "react";
+import { ListMusic } from "@/components/icons/music-icons";
 import { MoreLikeThisIcon } from "@/components/icons/more-like-this-icon";
 import { useT } from "@/lib/i18n";
 import { requestMusicPlaylist } from "@/lib/music/navigation";
+import "./music-linked-bio.css";
 import { useArtistPlaylists, useTrackPlaylists } from "@/lib/music/playlist-membership";
 import { reopenMusicMix, useMusicTrackContext } from "@/lib/music/recent-context";
 import type { MusicTrack } from "@/lib/music/types";
 
 const NAME_LIMIT = 3;
+const ArtistPlaylistSongs = lazy(() => import("./music-artist-playlist-songs"));
 
 function joinNames(
   names: string[],
@@ -78,7 +80,7 @@ export function MusicTrackMixChip({
         event.stopPropagation();
         if (busy) return;
         setBusy(true);
-        void reopenMusicMix(seed)
+        void reopenMusicMix(context)
           .catch(() => {})
           .finally(() => setBusy(false));
       }}
@@ -89,25 +91,43 @@ export function MusicTrackMixChip({
   );
 }
 
-export function MusicArtistPlaylistNote({ artist }: { artist: string | null | undefined }) {
+export function MusicArtistPlaylistNote({ artist, artwork }: { artist: string | null | undefined; artwork?: string | null }) {
   const t = useT();
+  const [open, setOpen] = useState(false);
   const { trackCount, playlists } = useArtistPlaylists(artist);
   if (!trackCount) return null;
-  const names = playlists.map((playlist) => playlist.name);
+  const shown = playlists.slice(0, NAME_LIMIT);
+  const rest = playlists.length - shown.length;
   const summary =
     trackCount === 1
       ? t("music.playlists.artistSong")
       : t("music.playlists.artistSongs", { tracks: trackCount });
   return (
+    <>
     <p
       data-music-playlist-note
       className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-ink-subtle"
     >
       <ListMusic size={13} aria-hidden="true" className="shrink-0" />
-      <span>{summary}</span>
-      {names.length > 0 && (
-        <span className="min-w-0 truncate text-ink-muted">{joinNames(names, t)}</span>
-      )}
+      <button type="button" className="music-linked-bio-link" aria-haspopup="dialog"
+        onClick={() => setOpen(true)}>{summary}</button>
+      {shown.map((playlist, index) => (
+        <span key={playlist.id} className="min-w-0 text-ink-muted">
+          <button
+            type="button"
+            className="music-linked-bio-link"
+            onClick={() => requestMusicPlaylist(playlist.id)}
+          >
+            {playlist.name}
+          </button>
+          {index < shown.length - 1 ? "," : ""}
+        </span>
+      ))}
+      {rest > 0 && <span className="text-ink-muted">{t("music.playlists.more", { count: rest })}</span>}
     </p>
+    {open && artist && <Suspense fallback={null}>
+      <ArtistPlaylistSongs artist={artist} artwork={artwork} onClose={() => setOpen(false)} />
+    </Suspense>}
+    </>
   );
 }

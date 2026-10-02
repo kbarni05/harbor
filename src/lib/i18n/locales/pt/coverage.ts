@@ -1,7 +1,25 @@
-const coverage: Record<string, string> = {
+const coverage: Record<string, string> = {
+  "Favorite page": "Página favorita",
+  "This Settings page": "Esta página de configurações",
+  "These preferences apply only to the page you are viewing.":
+    "Estas preferências se aplicam somente à página que você está vendo.",
+  "Keep at the top of its menu group": "Manter no topo do grupo no menu",
+  "Marks this page with a star and moves it before the other pages in the same group.":
+    "Marca esta página com uma estrela e a move para antes das outras páginas do mesmo grupo.",
+  "Compact page spacing": "Espaçamento compacto da página",
+  "Fits more settings on screen by reducing card spacing without changing any feature.":
+    "Exibe mais configurações na tela reduzindo o espaçamento dos cartões, sem alterar nenhum recurso.",
+  "Show page introduction": "Mostrar introdução da página",
+  "Shows the short explanation below this page's title.":
+    "Mostra a breve explicação abaixo do título desta página.",
+  "Automatic HDR / Dolby Vision": "HDR / Dolby Vision automático",
+  "Uses the active display's Windows HDR calibration. Dolby Vision is reshaped by libplacebo and output as display-matched HDR/PQ; SDR displays are handled automatically.":
+    "Usa a calibração HDR do Windows para a tela ativa. O Dolby Vision é remodelado pelo libplacebo e enviado como HDR/PQ ajustado à tela; telas SDR são tratadas automaticamente.",
+
   "Sound descriptions": "Descrições de som",
   "Hide sound effects and speaker names": "Ocultar efeitos sonoros e nomes de personagens",
-  "Removes bracketed descriptions like [door creaks] and shouted speaker labels like JOHN: while subtitles play, so a release that only ships an SDH track still reads as plain dialogue. Song lyrics, ordinary parentheses and non-Latin scripts are left alone. Skipped on forced and picture-based tracks.": "Remove descrições entre colchetes como [porta a ranger] e nomes de personagens em maiúsculas como JOHN: enquanto as legendas passam, para que um lançamento que só traz uma faixa SDH continue a ler-se como diálogo normal. Letras de músicas, parênteses normais e escritas não latinas ficam intactos. Não se aplica a faixas forçadas nem a faixas de imagem.",
+  "Removes bracketed descriptions like [door creaks] and shouted speaker labels like JOHN: while subtitles play, so a release that only ships an SDH track still reads as plain dialogue. Song lyrics, ordinary parentheses and non-Latin scripts are left alone. Skipped on forced and picture-based tracks.":
+    "Remove descrições entre colchetes como [porta a ranger] e nomes de personagens em maiúsculas como JOHN: enquanto as legendas passam, para que um lançamento que só traz uma faixa SDH continue a ler-se como diálogo normal. Letras de músicas, parênteses normais e escritas não latinas ficam intactos. Não se aplica a faixas forçadas nem a faixas de imagem.",
   "Play from": "Tocar de",
   end: "fim",
   "m:ss": "m:ss",

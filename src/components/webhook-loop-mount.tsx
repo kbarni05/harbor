@@ -31,6 +31,8 @@ export function WebhookLoopMount() {
 
     const tick = async () => {
       if (runningRef.current || cancelled) return;
+      if (!settingsRef.current.backgroundNetworkActivity && document.visibilityState === "hidden")
+        return;
       runningRef.current = true;
       try {
         const result = await runWebhookTick(settingsRef.current, authRef.current);

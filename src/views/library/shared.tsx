@@ -1,5 +1,5 @@
 import { Bookmark, RefreshCw } from "lucide-react";
-import type { RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import { type Meta } from "@/lib/cinemeta";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
@@ -244,68 +244,85 @@ export function RefreshButton({ onClick, spinning }: { onClick: () => void; spin
   );
 }
 
-export function GroupedGrid<
-  T extends { meta: Meta; date: number | null; key: string; stremioId?: string; localId?: string },
->({
-  groups,
-  onRemove,
-  onRemoveLocal,
-  scrollRef,
-}: {
-  groups: Array<{ label: string; items: T[] }>;
-  onRemove?: (stremioId: string) => void;
-  onRemoveLocal?: (localId: string) => void;
+type GroupItem = {
+  meta: Meta;
+  date: number | null;
+  key: string;
+  stremioId?: string;
+  localId?: string;
+};
+type GroupActions = {
+  onRemove?: (id: string) => void;
+  onRemoveLocal?: (id: string) => void;
   scrollRef?: RefObject<HTMLElement | null>;
-}) {
-  const t = useT();
+};
+export function GroupedGrid<T extends GroupItem>({
+  groups,
+  ...actions
+}: { groups: Array<{ label: string; items: T[] }> } & GroupActions) {
   return (
     <div className="flex flex-col gap-7">
       {groups.map((g) => (
-        <div key={g.label} className="flex flex-col gap-3">
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.24em] text-ink-subtle">
-            {t(g.label)} <span className="ms-1 text-ink-subtle/70">{g.items.length}</span>
-          </h3>
-          {scrollRef ? (
-            <VirtualGrid
-              items={g.items}
-              scrollRef={scrollRef}
-              minColumnWidth={150}
-              gapX={16}
-              gapY={28}
-              estimateRowHeight={300}
-              getKey={(it) => it.key}
-              renderItem={(it) => (
-                <WatchlistCard
-                  meta={it.meta}
-                  onRemove={
-                    onRemove && it.stremioId
-                      ? () => onRemove(it.stremioId as string)
-                      : onRemoveLocal && it.localId
-                        ? () => onRemoveLocal(it.localId as string)
-                        : undefined
-                  }
-                />
-              )}
-            />
-          ) : (
-            <Grid>
-              {g.items.map((it) => (
-                <WatchlistCard
-                  key={it.key}
-                  meta={it.meta}
-                  onRemove={
-                    onRemove && it.stremioId
-                      ? () => onRemove(it.stremioId as string)
-                      : onRemoveLocal && it.localId
-                        ? () => onRemoveLocal(it.localId as string)
-                        : undefined
-                  }
-                />
-              ))}
-            </Grid>
-          )}
-        </div>
+        <GroupedGridSection key={g.label} label={g.label} items={g.items} {...actions} />
       ))}
+    </div>
+  );
+}
+const INITIAL_GROUP_CARDS = 72;
+const GROUP_CARD_STEP = 72;
+function GroupedGridSection<T extends GroupItem>({
+  label,
+  items,
+  onRemove,
+  onRemoveLocal,
+  scrollRef,
+}: { label: string; items: T[] } & GroupActions) {
+  const t = useT();
+  const [visible, setVisible] = useState(INITIAL_GROUP_CARDS);
+  useEffect(
+    () => setVisible((v) => Math.min(Math.max(INITIAL_GROUP_CARDS, v), items.length)),
+    [items.length],
+  );
+  const shown = items.slice(0, visible);
+  const remaining = items.length - shown.length;
+  const remove = (it: T) =>
+    onRemove && it.stremioId
+      ? () => onRemove(it.stremioId!)
+      : onRemoveLocal && it.localId
+        ? () => onRemoveLocal(it.localId!)
+        : undefined;
+  return (
+    <div className="flex flex-col gap-3">
+      <h3 className="text-[11px] font-bold uppercase tracking-[0.24em] text-ink-subtle">
+        {t(label)} <span className="ms-1 text-ink-subtle/70">{items.length}</span>
+      </h3>
+      {scrollRef ? (
+        <VirtualGrid
+          items={items}
+          scrollRef={scrollRef}
+          minColumnWidth={150}
+          gapX={16}
+          gapY={28}
+          estimateRowHeight={300}
+          getKey={(it) => it.key}
+          renderItem={(it) => <WatchlistCard meta={it.meta} onRemove={remove(it)} />}
+        />
+      ) : (
+        <Grid>
+          {shown.map((it) => (
+            <WatchlistCard key={it.key} meta={it.meta} onRemove={remove(it)} />
+          ))}
+        </Grid>
+      )}
+      {!scrollRef && remaining > 0 && (
+        <button
+          type="button"
+          onClick={() => setVisible((v) => Math.min(items.length, v + GROUP_CARD_STEP))}
+          className="self-center rounded-full border border-edge-soft px-4 py-2 text-ink-muted"
+        >
+          {t("Show {n} more", { n: Math.min(remaining, GROUP_CARD_STEP) })}
+        </button>
+      )}
     </div>
   );
 }

@@ -5,12 +5,23 @@ import type { EpgChannelMeta, EpgIndex, EpgProgram } from "./types";
 const TTL_MS = 60 * 60 * 1000;
 const DISK_TTL_MS = 12 * 60 * 60 * 1000;
 const PROGRESS_PUBLISH_MS = 300;
+const MAX_CACHED_PLAYLISTS = 3;
 
 const cache = new Map<string, EpgIndex>();
 const inflight = new Map<string, Promise<EpgIndex>>();
 const listeners = new Set<() => void>();
 
 let notifyScheduled = false;
+
+function rememberEpg(playlistId: string, index: EpgIndex): void {
+  cache.delete(playlistId);
+  cache.set(playlistId, index);
+  while (cache.size > MAX_CACHED_PLAYLISTS) {
+    const oldest = cache.keys().next().value;
+    if (typeof oldest !== "string") break;
+    cache.delete(oldest);
+  }
+}
 function notify() {
   if (notifyScheduled) return;
   notifyScheduled = true;
@@ -28,7 +39,9 @@ export function subscribeEpg(fn: () => void): () => void {
 }
 
 export function getCachedEpg(playlistId: string): EpgIndex | null {
-  return cache.get(playlistId) ?? null;
+  const value = cache.get(playlistId) ?? null;
+  if (value) rememberEpg(playlistId, value);
+  return value;
 }
 
 export function clearEpg(playlistId?: string) {
@@ -51,7 +64,7 @@ async function restoreFromDisk(playlistId: string, signature: string) {
   if (!value || !(value.byChannel instanceof Map) || value.byChannel.size === 0) return;
   const current = cache.get(playlistId);
   if (current && current.byChannel.size >= value.byChannel.size) return;
-  cache.set(playlistId, value);
+  rememberEpg(playlistId, value);
   notify();
 }
 
@@ -92,12 +105,12 @@ export async function loadEpg(params: {
     const now = Date.now();
     if (now - lastPublish < PROGRESS_PUBLISH_MS) return;
     lastPublish = now;
-    cache.set(playlistId, { byChannel, channelMeta, fetchedAt: now });
+    rememberEpg(playlistId, { byChannel, channelMeta, fetchedAt: now });
     notify();
   };
   const promise: Promise<EpgIndex> = doFetchWithFallback(urls, onProgress).then((idx) => {
     if (inflight.get(playlistId) === promise) {
-      cache.set(playlistId, idx);
+      rememberEpg(playlistId, idx);
       notify();
     }
     void writeIptvCache<EpgIndex>("epg", playlistId, {

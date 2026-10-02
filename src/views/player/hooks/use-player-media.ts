@@ -34,6 +34,7 @@ import { useSubDrop } from "./use-sub-drop";
 import { useSubStyleApply } from "./use-sub-style-apply";
 import { useAssNormalize } from "./use-ass-normalize";
 import { useTrackAutoload } from "./use-track-autoload";
+import { useTranslationAutoSelect } from "./use-translation-auto-select";
 import { useSecondarySub } from "./use-secondary-sub";
 import { useAutoSync } from "./use-auto-sync";
 import { publishAutoSync } from "@/components/player/autosync/autosync-store";
@@ -41,6 +42,7 @@ import { useVideoDownload } from "./use-video-download";
 import { useWebviewMemory } from "./use-webview-memory";
 import { useCaptionsPopoutOpen } from "@/lib/player/captions-popout-state";
 import { sdhSafeForLanguage } from "@/lib/subtitles/sdh-filter";
+import { effectiveHdrToSdr } from "@/lib/player/hdr-output-policy";
 
 const HDR_NATIVE_GAMMAS = new Set(["pq", "hlg"]);
 
@@ -161,6 +163,8 @@ export function usePlayerMedia(params: {
     authKey,
   });
 
+  useTranslationAutoSelect({ bridgeRef, mediaUrl: src.url });
+
   const autoSync = useAutoSync({
     bridgeRef,
     src,
@@ -195,10 +199,11 @@ export function usePlayerMedia(params: {
   }, [asStatus, asOffer, asApply, asRevert, asRetry, asRun, asStop, asFeedback]);
 
   const subEmbed = engine === "mpv" && settings.playerMpvEmbed;
+  const hdrToSdr = effectiveHdrToSdr(settings);
   const hdrNativeSurface =
     engine === "mpv" &&
     isWindowsDesktop() &&
-    !settings.playerHdrToSdr &&
+    !hdrToSdr &&
     HDR_NATIVE_GAMMAS.has(snap.hdrGamma) &&
     (settings.playerHdrOpaqueWindow ||
       (settings.playerMpvEmbed && settings.playerHdrStage !== "off"));
@@ -271,6 +276,11 @@ export function usePlayerMedia(params: {
     snap,
     sourceUrl: src.url,
     lang: settings.secondarySubLang,
+    nativeReady: engine === "mpv" && bridgeReady && mpvMediaReadyForStyle,
+    nativeRender: hdrNativeSurface && !captionsPopout,
+    bridgeKey,
+    placement: settings.subSecondaryPlacement,
+    marginY: settings.subMarginY,
   });
   useEffect(() => {
     clearImportedSubs();

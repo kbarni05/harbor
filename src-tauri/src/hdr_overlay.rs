@@ -169,6 +169,17 @@ pub async fn hdr_overlay_emit_props(
 }
 
 #[tauri::command]
+pub async fn hdr_overlay_emit_clock(
+    app: AppHandle,
+    mut payload: serde_json::Value,
+) -> Result<(), String> {
+    let operation = HDR_OVERLAY_OPERATION.lock().await;
+    let Some(stage_id) = operation.as_ref() else { return Ok(()); };
+    payload["stageId"] = serde_json::Value::String(stage_id.clone());
+    app.emit_to(HDR_OVERLAY_LABEL, "hdr-stage://clock", payload).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn hdr_overlay_emit_action(
     app: AppHandle,
     event: String,

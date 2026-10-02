@@ -1,6 +1,10 @@
 allowBuilds:
   esbuild: true
+  onnxruntime-node: true
   protobufjs: false
+  sharp: false
 blockExoticSubdeps: false
+minimumReleaseAgeExclude:
+  - "@tauri-apps/api@2.12.0"
 onlyBuiltDependencies:
   - esbuild

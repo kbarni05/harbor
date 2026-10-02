@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import type { Meta } from "@/lib/cinemeta";
 import { peekCachedLogo, resolveLogo } from "@/lib/logo";
 import { sizeImageUrl } from "@/lib/img-size";
@@ -8,6 +8,9 @@ import { useView } from "@/lib/view";
 import { usePosterChain } from "@/components/poster";
 import { ensureStaticHeroArt, peekStaticHeroArt } from "@/lib/providers/anime-hero-art-static";
 import { prepareExpandingCardArtwork } from "@/lib/expanding-card-artwork";
+
+import { mergePreferredMeta } from "@/lib/preferred-meta";
+import { usePreferredMeta } from "@/lib/use-preferred-meta";
 
 const ANIME_ID = /^(kitsu|mal|anilist|anidb):/;
 
@@ -42,15 +45,25 @@ function useLogo(meta: Meta): string | undefined {
   return logo;
 }
 
-export const TvCard = memo(function TvCard({ meta, kids = false }: { meta: Meta; kids?: boolean }) {
+export const TvCard = memo(function TvCard({
+  meta,
+  kids = false,
+  reason,
+}: {
+  meta: Meta;
+  kids?: boolean;
+  reason?: string;
+}) {
   const { openMeta, openManga } = useView();
   const { open: openContextMenu } = useContextMenu();
   const { settings } = useSettings();
-  const logo = useLogo(meta);
+  const preferredMeta = usePreferredMeta(meta);
+  const displayMeta = useMemo(() => mergePreferredMeta(meta, preferredMeta), [meta, preferredMeta]);
+  const logo = useLogo(displayMeta);
   const poster = usePosterChain(
     settings.rpdbKey,
     meta.id,
-    meta.poster,
+    displayMeta.poster,
     meta.type === "series" ? "series" : "movie",
   );
 
@@ -59,24 +72,25 @@ export const TvCard = memo(function TvCard({ meta, kids = false }: { meta: Meta;
       openManga(meta.id);
       return;
     }
-    openMeta(meta);
+    openMeta(displayMeta);
   };
 
   return (
     <button
       type="button"
       onClick={open}
-      onContextMenu={(e) => openContextMenu(e, { kind: "meta", meta })}
-      title={meta.name}
+      onContextMenu={(e) => openContextMenu(e, { kind: "meta", meta: displayMeta })}
+      title={displayMeta.name}
       style={{ borderRadius: settings.posterRadius }}
       className="group relative block aspect-[16/9] w-full overflow-hidden bg-elevated ring-1 ring-edge-soft transition-[box-shadow,--tw-ring-color] duration-200 ease-out hover:ring-edge hover:shadow-[0_10px_28px_-18px_rgba(0,0,0,0.8)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/70"
     >
       <TvCardArtwork
-        meta={meta}
+        meta={displayMeta}
         kids={kids}
         logo={logo}
         posterSrc={poster.src}
         onPosterError={poster.onError}
+        reason={reason}
       />
     </button>
   );
@@ -121,12 +135,14 @@ export function TvCardArtwork({
   logo,
   posterSrc,
   onPosterError,
+  reason,
 }: {
   meta: Meta;
   kids?: boolean;
   logo?: string;
   posterSrc?: string;
   onPosterError?: () => void;
+  reason?: string;
 }) {
   const { settings } = useSettings();
   const [failedBackdrop, setFailedBackdrop] = useState<string>();
@@ -193,9 +209,9 @@ export function TvCardArtwork({
               {meta.name}
             </span>
           )}
-          {!kids && meta.releaseInfo && (
-            <span className="text-[11px] tabular-nums text-ink-muted [text-shadow:0_1px_6px_rgba(0,0,0,0.9)]">
-              {meta.releaseInfo}
+          {!kids && (meta.releaseInfo || reason) && (
+            <span className="truncate text-[11px] tabular-nums text-ink-muted [text-shadow:0_1px_6px_rgba(0,0,0,0.9)]">
+              {[meta.releaseInfo, reason].filter(Boolean).join(" · ")}
             </span>
           )}
         </span>

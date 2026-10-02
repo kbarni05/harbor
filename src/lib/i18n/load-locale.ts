@@ -9,6 +9,7 @@ const loaders = {
   de: () => import("./locales/de"),
   es: () => import("./locales/es"),
   fr: () => import("./locales/fr"),
+  hu: () => import("./locales/hu"),
   hi: () => import("./locales/hi"),
   id: () => import("./locales/id"),
   it: () => import("./locales/it"),

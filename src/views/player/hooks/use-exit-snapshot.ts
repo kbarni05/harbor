@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { captureFrame, captureMpvFrame, saveSnapshot } from "@/lib/snapshots";
 import { useSettings } from "@/lib/settings";
 import { trickplayGet } from "@/lib/trickplay";
-import { getPlaybackPosition } from "@/lib/player/playback-clock";
+import { getPlaybackPosition, getSeekHovering } from "@/lib/player/playback-clock";
 import type { PlayerStatus } from "@/lib/player/bridge";
 import type { PlayerSrc } from "@/lib/view";
 import { cloudWriteId } from "@/lib/stremio";
 
-const CACHE_MS = 60000;
 const REFRESH_MS = 300000;
+const PASSIVE_REFRESH_MS = 60000;
 const WARM_MS = 4000;
 const EXIT_GRAB_MS = 700;
 const GRAB_FULL_MS = 3500;
@@ -41,33 +41,77 @@ export function useExitSnapshot(params: {
   resolvedImdbVerified: boolean;
   seekPreviewEnabled: boolean;
 }) {
-  const { src, engine, status, durationSec, videoMountRef, resolvedImdbId, resolvedImdbVerified, seekPreviewEnabled } = params;
+  const {
+    src,
+    engine,
+    status,
+    durationSec,
+    videoMountRef,
+    resolvedImdbId,
+    resolvedImdbVerified,
+    seekPreviewEnabled,
+  } = params;
   const { settings } = useSettings();
   const fullQuality = settings.cwSnapshotFullQuality;
   const snapshotsOff = settings.cwSnapshotRetentionDays === 0;
-  const latest = useRef({ src, engine, durationSec, resolvedImdbId, resolvedImdbVerified, seekPreviewEnabled, fullQuality, snapshotsOff });
-  latest.current = { src, engine, durationSec, resolvedImdbId, resolvedImdbVerified, seekPreviewEnabled, fullQuality, snapshotsOff };
+  const latest = useRef({
+    src,
+    engine,
+    durationSec,
+    resolvedImdbId,
+    resolvedImdbVerified,
+    seekPreviewEnabled,
+    fullQuality,
+    snapshotsOff,
+  });
+  latest.current = {
+    src,
+    engine,
+    durationSec,
+    resolvedImdbId,
+    resolvedImdbVerified,
+    seekPreviewEnabled,
+    fullQuality,
+    snapshotsOff,
+  };
   const lastGoodRef = useRef<Cached | null>(null);
   const lastGrabAtRef = useRef(0);
   const capturedKeyRef = useRef<string | null>(null);
 
   const grabFrame = useCallback(
-    async (allowTrick: boolean): Promise<string | null> => {
+    async (allowMpvCapture: boolean, allowTrick: boolean): Promise<string | null> => {
       const { engine: eng, seekPreviewEnabled: seek, fullQuality: full } = latest.current;
       if (eng === "html5") {
         const v = videoMountRef.current?.querySelector("video") as HTMLVideoElement | null;
         return v ? captureFrame(v, full) : null;
       }
+      // mpv captures the full rendered frame before Harbor downsizes it. Doing
+      // that on a timer made 4K playback encode a large JPEG every 12 seconds,
+      // which is enough to stall lower-power CPUs. While video is running, use
+      // an already-generated trickplay thumbnail and reserve a real capture for
+      // pause/exit, when it cannot interrupt presentation.
+      if (!allowMpvCapture) {
+        if (allowTrick && seek && !getSeekHovering()) {
+          return trickplayGet(getPlaybackPosition());
+        }
+        return null;
+      }
       const mpvImg = await captureMpvFrame(full);
       if (mpvImg) return mpvImg;
-      if (allowTrick && seek) return trickplayGet(getPlaybackPosition());
+      if (allowTrick && seek && !getSeekHovering()) return trickplayGet(getPlaybackPosition());
       return null;
     },
     [videoMountRef],
   );
 
   const captureExitSnapshot = useCallback(async () => {
-    const { src: s, durationSec: dur, resolvedImdbId: resolved, resolvedImdbVerified: verified, snapshotsOff: off } = latest.current;
+    const {
+      src: s,
+      durationSec: dur,
+      resolvedImdbId: resolved,
+      resolvedImdbVerified: verified,
+      snapshotsOff: off,
+    } = latest.current;
     if (off) return;
     const id = snapshotId(s, resolved, verified);
     if (!id) {
@@ -90,7 +134,7 @@ export function useExitSnapshot(params: {
     }
     const budget = lastGoodRef.current ? EXIT_GRAB_MS : GRAB_FULL_MS;
     const fresh = await Promise.race([
-      grabFrame(true),
+      grabFrame(true, true),
       new Promise<null>((r) => setTimeout(() => r(null), budget)),
     ]);
     if (fresh && latest.current.src.meta.id === s.meta.id) {
@@ -102,14 +146,19 @@ export function useExitSnapshot(params: {
   useEffect(() => {
     if (status !== "playing" || snapshotsOff) return;
     const tick = async () => {
-      const { src: s, durationSec: dur, resolvedImdbId: resolved, resolvedImdbVerified: verified } = latest.current;
+      const {
+        src: s,
+        durationSec: dur,
+        resolvedImdbId: resolved,
+        resolvedImdbVerified: verified,
+      } = latest.current;
       const id = snapshotId(s, resolved, verified);
       if (!id) return;
       const good = lastGoodRef.current;
       if (good && good.id === id && Date.now() - lastGrabAtRef.current < REFRESH_MS) return;
       const cur = getPlaybackPosition();
       if (!Number.isFinite(cur) || cur <= 0 || nearEnd(cur, dur, false)) return;
-      const img = await grabFrame(true);
+      const img = await grabFrame(false, true);
       if (!img) return;
       lastGrabAtRef.current = Date.now();
       if (latest.current.src.meta.id !== s.meta.id) return;
@@ -118,12 +167,16 @@ export function useExitSnapshot(params: {
       persist(cached);
     };
     const warm = window.setTimeout(() => void tick(), WARM_MS);
-    const id = window.setInterval(() => void tick(), CACHE_MS);
+    const id = window.setInterval(() => void tick(), PASSIVE_REFRESH_MS);
     return () => {
       window.clearTimeout(warm);
       window.clearInterval(id);
     };
   }, [status, snapshotsOff, grabFrame]);
+
+  useEffect(() => {
+    if (status === "paused") void captureExitSnapshot();
+  }, [status, captureExitSnapshot]);
 
   useEffect(() => {
     const flush = () => persist(lastGoodRef.current);

@@ -6,22 +6,51 @@ import { SettingGroup } from "../kit";
 import { ToggleRow } from "../shared";
 import { ChoiceBlock, Tag } from "./choice";
 import { DisplayPanelSelector } from "./display-panel-selector";
+import { effectiveHdrToSdr } from "@/lib/player/hdr-output-policy";
 
-type HdrMode = "sdr" | "hdrWindow" | "hdrEmbedded";
+type HdrMode = "auto" | "sdr" | "hdrWindow" | "hdrEmbedded";
 
 const MODE_FLAGS: Record<
   HdrMode,
-  { playerHdrToSdr: boolean; playerHdrOpaqueWindow: boolean; playerHdrStage: "auto" | "off" | "always" }
+  {
+    playerHdrAuto: boolean;
+    playerHdrToSdr: boolean;
+    playerHdrOpaqueWindow: boolean;
+    playerHdrStage: "auto" | "off" | "always";
+  }
 > = {
-  sdr: { playerHdrToSdr: true, playerHdrOpaqueWindow: false, playerHdrStage: "off" },
-  hdrWindow: { playerHdrToSdr: false, playerHdrOpaqueWindow: true, playerHdrStage: "off" },
-  hdrEmbedded: { playerHdrToSdr: false, playerHdrOpaqueWindow: false, playerHdrStage: "auto" },
+  auto: {
+    playerHdrAuto: true,
+    playerHdrToSdr: false,
+    playerHdrOpaqueWindow: false,
+    playerHdrStage: "auto",
+  },
+  sdr: {
+    playerHdrAuto: false,
+    playerHdrToSdr: true,
+    playerHdrOpaqueWindow: false,
+    playerHdrStage: "off",
+  },
+  hdrWindow: {
+    playerHdrAuto: false,
+    playerHdrToSdr: false,
+    playerHdrOpaqueWindow: true,
+    playerHdrStage: "off",
+  },
+  hdrEmbedded: {
+    playerHdrAuto: false,
+    playerHdrToSdr: false,
+    playerHdrOpaqueWindow: false,
+    playerHdrStage: "auto",
+  },
 };
 
 function deriveMode(s: {
+  playerHdrAuto: boolean;
   playerHdrToSdr: boolean;
   playerHdrOpaqueWindow: boolean;
 }): HdrMode {
+  if (s.playerHdrAuto) return "auto";
   if (s.playerHdrOpaqueWindow) return "hdrWindow";
   if (s.playerHdrToSdr) return "sdr";
   return "hdrEmbedded";
@@ -33,7 +62,7 @@ export function HdrModePicker() {
   const current = deriveMode(settings);
   const svpAlwaysActive =
     settings.playerSvp && settings.svpVpyPath.length > 0 && settings.svpScope === "all";
-  const rtxHdrUnavailable = isRtxHdrBlocked(settings.playerHdrToSdr, svpAlwaysActive);
+  const rtxHdrUnavailable = isRtxHdrBlocked(effectiveHdrToSdr(settings), svpAlwaysActive);
   const rtxVsrUnavailable = isRtxVsrBlocked(svpAlwaysActive);
 
   const options: Array<{
@@ -44,26 +73,43 @@ export function HdrModePicker() {
     experimental?: boolean;
   }> = [
     {
+      id: "auto",
+      label: t("Automatic HDR / Dolby Vision"),
+      sub: t(
+        "Uses the active display's Windows HDR calibration. Dolby Vision is reshaped by libplacebo and output as display-matched HDR/PQ; SDR displays are handled automatically.",
+      ),
+      recommended: true,
+    },
+    {
       id: "sdr",
       label: t("Tonemap to SDR"),
-      sub: t("Maps HDR down to SDR with bt.2446a. Works on any display. Pick this if HDR looks washed-out or grey."),
-      recommended: true,
+      sub: t(
+        "Maps HDR down to SDR with bt.2446a. Works on any display. Pick this if HDR looks washed-out or grey.",
+      ),
     },
     {
       id: "hdrWindow",
       label: t("True HDR, separate window"),
-      sub: t("Plays HDR in its own window so Windows shows real HDR and the SDR brightness slider stops dimming it. The most reliable way to get true HDR."),
+      sub: t(
+        "Plays HDR in its own window so Windows shows real HDR and the SDR brightness slider stops dimming it. The most reliable way to get true HDR.",
+      ),
     },
     {
       id: "hdrEmbedded",
       label: t("True HDR, embedded"),
-      sub: t("Keeps HDR inside Harbor with the controls floating above the video. Subtitles render on the video. If the control bar does not appear, press Esc or use separate window."),
+      sub: t(
+        "Keeps HDR inside Harbor with the controls floating above the video. Subtitles render on the video. If the control bar does not appear, press Esc or use separate window.",
+      ),
       experimental: true,
     },
   ];
 
-  const rtxHdrSub = t("Nvidia RTX GPUs only. Upconverts SDR video to HDR on the GPU (turn on RTX Video HDR in the Nvidia app; needs GPU decode). Experimental. Unavailable while SVP is active for the current video.");
-  const rtxVsrSub = t("Nvidia RTX GPUs only. Upscales SDR video with AI on the GPU (turn on RTX Video Super Resolution in the Nvidia app; needs GPU decode). Experimental. Unavailable while SVP is active for the current video.");
+  const rtxHdrSub = t(
+    "Nvidia RTX GPUs only. Upconverts SDR video to HDR on the GPU (turn on RTX Video HDR in the Nvidia app; needs GPU decode). Experimental. Unavailable while SVP is active for the current video.",
+  );
+  const rtxVsrSub = t(
+    "Nvidia RTX GPUs only. Upscales SDR video with AI on the GPU (turn on RTX Video Super Resolution in the Nvidia app; needs GPU decode). Experimental. Unavailable while SVP is active for the current video.",
+  );
 
   return (
     <>

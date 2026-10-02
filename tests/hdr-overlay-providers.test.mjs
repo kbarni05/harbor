@@ -69,6 +69,7 @@ test("HDR shell mounts with the actual profile, auth and navigation contexts", (
     "@/lib/settings": { SettingsProvider: ({ children }) => children },
     "@/lib/player/mpv-forward": { createForwardingMpvBridge: () => ({}) },
     "./player/hooks/use-player-interaction-lock": { usePlayerInteractionBlocker: () => {} },
+    "@/components/player/xray/xray-overlay": { XrayOverlay: () => null },
     "./player/drag-click-stage": { DragClickStage: () => null },
     "@/components/player/player-interaction-lock": { PlayerInteractionLockControls: () => null },
     "@/lib/hdr-overlay": { hdrOverlayEmitAction: (...args) => forwarded.push(args) },
@@ -141,6 +142,7 @@ test("overlay subscribes before requesting props and cancels late listener regis
         "@/lib/player/mpv-forward": { createForwardingMpvBridge: () => ({}) },
         "./player/hooks/use-player-interaction-lock": { usePlayerInteractionBlocker() {} },
         "@/lib/hdr-overlay": {
+          onHdrStageClock: async () => () => {},
           onHdrStageProps: () =>
             new Promise((resolve) => {
               registered = resolve;

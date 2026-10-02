@@ -1,6 +1,7 @@
+import { Gauge } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { useSettings } from "@/lib/settings";
-import { Section, Segmented } from "../shared";
+import { Section, Segmented, ToggleRow } from "../shared";
 import { TrayRow } from "../tray-row";
 import { DownloadsSection } from "../player-panel";
 import { DesktopOnlyBlock, isTauri } from "../player-panel/internals";
@@ -30,12 +31,11 @@ export function SystemTab() {
         )}
       </Section>
 
+      <PerformanceControls />
       {isTauri && (
         <Section
           title={t("Window behavior")}
-          subtitle={t(
-            "Choose what happens when you close, minimize, or switch away from Harbor.",
-          )}
+          subtitle={t("Choose what happens when you close, minimize, or switch away from Harbor.")}
         >
           <TrayRow />
         </Section>
@@ -62,7 +62,38 @@ export function SystemTab() {
           />
         </Section>
       )}
-
     </>
+  );
+}
+
+function PerformanceControls() {
+  const t = useT();
+  const { settings, update } = useSettings();
+  return (
+    <Section
+      title={t("Performance & resource use")}
+      subtitle={t(
+        "Choose whether Harbor favours the lightest idle footprint or warms up common pages and keeps optional automation active while hidden.",
+      )}
+    >
+      <ToggleRow
+        leading={<Gauge size={17} strokeWidth={2} />}
+        label={t("Warm up common pages after launch")}
+        sub={t(
+          "Preloads the player, source picker, details, and Settings when the app is idle. Leave this off for lower startup memory and battery use.",
+        )}
+        value={settings.preloadViews}
+        onChange={(preloadViews) => update({ preloadViews })}
+      />
+      <ToggleRow
+        leading={<Gauge size={17} strokeWidth={2} />}
+        label={t("Allow optional background checks")}
+        sub={t(
+          "Lets scheduled downloads and release webhooks check for updates while Harbor is hidden. Turn it off to keep background network activity to a minimum.",
+        )}
+        value={settings.backgroundNetworkActivity}
+        onChange={(backgroundNetworkActivity) => update({ backgroundNetworkActivity })}
+      />
+    </Section>
   );
 }

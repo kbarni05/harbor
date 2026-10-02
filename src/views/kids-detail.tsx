@@ -7,6 +7,7 @@ import { useT } from "@/lib/i18n";
 import { tmdbDetails, type TmdbDetail } from "@/lib/providers/tmdb";
 import { useSettings } from "@/lib/settings";
 import { useView } from "@/lib/view";
+import { usePreferredMeta } from "@/lib/use-preferred-meta";
 import { CollectionRow } from "./detail/collection-row";
 import { dropUnreleased, dropUnsafeGenres } from "./kids/kids-filter";
 import { KidsEpisodes } from "./kids-detail/kids-episodes";
@@ -20,6 +21,7 @@ export function KidsDetailView({
 }) {
   const t = useT();
   const { settings } = useSettings();
+  const preferredMeta = usePreferredMeta(meta);
   const { openPicker } = useView();
   const [base, setBase] = useState<Meta | null>(null);
   const [detail, setDetail] = useState<TmdbDetail | null>(null);
@@ -46,11 +48,19 @@ export function KidsDetailView({
   const backdrop = detail?.backdrop || base?.background || meta.background || meta.poster;
   const logo = detail?.logo || base?.logo || meta.logo;
   const overview =
-    detail?.overview || base?.description || (meta.id.startsWith("tmdb:") ? "" : meta.description) || "";
+    preferredMeta?.description ||
+    detail?.overview ||
+    base?.description ||
+    (meta.id.startsWith("tmdb:") ? "" : meta.description) ||
+    "";
   const genres = (detail?.genres?.length ? detail.genres : base?.genres) ?? [];
   const runtime = detail?.runtime;
   const year = meta.releaseInfo || base?.releaseInfo;
-  const recs = dropUnsafeGenres(dropUnreleased(dedupe([...(detail?.recommendations ?? []), ...(detail?.similar ?? [])], meta.id)));
+  const recs = dropUnsafeGenres(
+    dropUnreleased(
+      dedupe([...(detail?.recommendations ?? []), ...(detail?.similar ?? [])], meta.id),
+    ),
+  );
 
   const onPlay = () => {
     const isSeries = meta.type === "series";
@@ -82,7 +92,7 @@ export function KidsDetailView({
             />
           ) : (
             <h1 className="font-display text-[clamp(34px,5vw,60px)] font-semibold leading-none tracking-tight text-white drop-shadow-[0_3px_12px_rgba(0,0,0,0.55)]">
-              {meta.name}
+              {preferredMeta?.name || meta.name}
             </h1>
           )}
           <div className="flex flex-wrap items-center gap-2">
@@ -100,7 +110,9 @@ export function KidsDetailView({
             <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/25 transition-transform duration-200 group-hover:rotate-6">
               <Play size={26} strokeWidth={0} fill="currentColor" className="ms-0.5" />
             </span>
-            <span className="font-display text-[22px] font-extrabold tracking-tight">{t("Play")}</span>
+            <span className="font-display text-[22px] font-extrabold tracking-tight">
+              {t("Play")}
+            </span>
           </button>
         </div>
       </section>
@@ -110,16 +122,17 @@ export function KidsDetailView({
           <p className="max-w-3xl text-[17px] font-medium leading-relaxed text-ink">{overview}</p>
         )}
         {meta.type === "series" && detail && detail.seasons.length > 0 && (
-          <KidsEpisodes meta={meta} tvId={detail.id} seasons={detail.seasons} />
+          <KidsEpisodes
+            meta={meta}
+            tvId={detail.id}
+            seasons={detail.seasons}
+            preferredVideos={preferredMeta?.videos}
+          />
         )}
-        {detail?.collection && (
-          <CollectionRow collection={detail.collection} currentId={meta.id} />
-        )}
+        {detail?.collection && <CollectionRow collection={detail.collection} currentId={meta.id} />}
         {recs.length > 0 && (
           <Row
-            title={
-              <span className="font-display text-[#0e3a43]">{t("More to explore")}</span>
-            }
+            title={<span className="font-display text-[#0e3a43]">{t("More to explore")}</span>}
             titleClassName="text-[#0e3a43]"
             titleScale={1.28}
             min={148}

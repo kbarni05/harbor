@@ -97,8 +97,10 @@ export function useGamepad(): void {
   const backgroundInput = settings.controllerBackgroundInput;
 
   useEffect(() => {
-    void invoke("gamepad_set_background_input", { allowed: backgroundInput }).catch(() => {});
-  }, [backgroundInput]);
+    void invoke("gamepad_set_background_input", { allowed: enabled && backgroundInput }).catch(
+      () => {},
+    );
+  }, [backgroundInput, enabled]);
 
   const cfgRef = useRef({
     deadzone: settings.controllerDeadzone,
@@ -137,14 +139,17 @@ export function useGamepad(): void {
       stopRepeat(id);
       fire(false);
       const r: { delay: number | null; interval: number | null } = { delay: null, interval: null };
-      r.delay = window.setTimeout(() => {
-        r.delay = null;
-        r.interval = window.setInterval(() => fire(true), Math.max(40, cfgRef.current.repeatMs));
-      }, Math.max(0, cfgRef.current.initialDelayMs));
+      r.delay = window.setTimeout(
+        () => {
+          r.delay = null;
+          r.interval = window.setInterval(() => fire(true), Math.max(40, cfgRef.current.repeatMs));
+        },
+        Math.max(0, cfgRef.current.initialDelayMs),
+      );
       repeats.set(id, r);
     };
     const stopAll = () => {
-      for (const id of [...repeats.keys()]) stopRepeat(id);
+      for (const id of repeats.keys()) stopRepeat(id);
     };
 
     const fireButton = (button: GpButton, repeat = false) => {

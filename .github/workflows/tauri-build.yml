@@ -2,9 +2,23 @@ name: tauri-build
 
 on:
   workflow_dispatch:
+    inputs:
+      windows_only:
+        description: Build the verified Windows installer only
+        type: boolean
+        default: false
+      build_log_job_id:
+        description: Read diagnostics from a completed build job instead of building
+        type: string
+        default: ""
+      existing_build_run_id:
+        description: Repackage a preserved Windows build instead of compiling again
+        type: string
+        default: ""
   push:
     tags:
       - "v*"
+      - "V*"
 
 permissions:
   contents: read
@@ -17,9 +31,71 @@ env:
   HARBOR_CAPSTAN_OPTIONAL: "1"
 
 jobs:
+  build-log-diagnostics:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_log_job_id != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Read completed build diagnostics
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_LOG_JOB_ID: ${{ inputs.build_log_job_id }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re, subprocess, tempfile, zipfile
+          job = os.environ['BUILD_LOG_JOB_ID']
+          if not re.fullmatch(r'[0-9]{1,20}', job):
+              raise SystemExit('Expected a numeric job ID')
+          result = subprocess.run(
+              ['gh', 'api', '--allow-escape-sequences', f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/jobs/{job}/logs"],
+              capture_output=True, text=True,
+          )
+          log = result.stdout if result.returncode == 0 else result.stderr
+          log = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', log)
+          log = re.sub(r'https?://[^\s"<>]+', lambda match: '[URL host: ' + match.group(0).split('/')[2] + ']', log)
+          lines = log.splitlines()
+          errors = [index for index, line in enumerate(lines) if '##[error]' in line]
+          selected = '\n'.join(lines[max(0, errors[-1] - 12):errors[-1] + 5]) if errors else '\n'.join(lines[-40:])
+          print(selected)
+          message = selected.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print(f'::notice title=Completed build diagnostics::{message}')
+          if result.returncode == 0:
+              job_info = json.loads(subprocess.check_output(['gh', 'api', f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/jobs/{job}"]))
+              artifacts = json.loads(subprocess.check_output(['gh', 'api', f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{job_info['run_id']}/artifacts"]))
+              for artifact in artifacts['artifacts']:
+                  if artifact['name'] != 'windows-installer-build-output':
+                      continue
+                  with tempfile.TemporaryDirectory() as directory:
+                      root = pathlib.Path(directory)
+                      with (root / 'artifact.zip').open('wb') as output:
+                          subprocess.run(['gh', 'api', '--allow-escape-sequences', f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/artifacts/{artifact['id']}/zip"], stdout=output, check=True)
+                      with zipfile.ZipFile(root / 'artifact.zip') as archive:
+                          archive.extractall(root / 'artifact')
+                      for installer in (root / 'artifact').rglob('*.exe'):
+                          listing = subprocess.check_output(['7z', 'l', '-slt', str(installer)], text=True)
+                          inventory = '\n'.join(line for line in listing.splitlines() if line.startswith(('Path = ', 'Size = ', 'Attributes = ')))
+                          print(inventory)
+                          message = inventory.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                          print(f'::notice title=Packaged file inventory::{message}')
+          raise SystemExit(result.returncode)
+          PY
+
+  windows-installer:
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.windows_only || inputs.existing_build_run_id != '') && inputs.build_log_job_id == '' }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/windows-installer.yml
+    with:
+      existing_build_run_id: ${{ inputs.existing_build_run_id }}
+
   build:
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.windows_only && inputs.build_log_job_id == '' && inputs.existing_build_run_id == '') }}
     name: ${{ matrix.platform.name }} (${{ matrix.platform.target }})
     runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 120
+    continue-on-error: ${{ matrix.platform.target == 'x86_64-apple-darwin' }}
     strategy:
       fail-fast: false
       matrix:
@@ -29,7 +105,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             bundle: msi
           - name: macOS-AppleSilicon
-            runner: macos-latest
+            runner: macos-15
             target: aarch64-apple-darwin
             bundle: dmg
           - name: macOS-Intel
@@ -176,6 +252,31 @@ jobs:
             echo "::warning::TAURI_SIGNING_PRIVATE_KEY not set — building installers only, no signed updater artifacts."
           fi
 
+      - name: Detect Apple signing identity
+        if: contains(matrix.platform.runner, 'macos')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              printf '%s<<HARBOR_APPLE_EOF\n%s\nHARBOR_APPLE_EOF\n' "$name" "$value" >> "$GITHUB_ENV"
+            fi
+          done
+          if [ -z "$APPLE_CERTIFICATE" ] && [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "::warning::No Apple signing secrets, so this macOS bundle is ad-hoc signed: Gatekeeper reports an unidentified developer, the dmg is left unsigned, and users must run xattr -dr com.apple.quarantine on the installed app."
+          elif [ -n "$APPLE_ID" ] && [ -z "$APPLE_TEAM_ID" ]; then
+            echo "::error::APPLE_ID is set without APPLE_TEAM_ID. tauri-bundler rejects that combination after it has already signed the bundle, so the build is stopped here instead."
+            exit 1
+          fi
+
       - name: Prepare bundled macOS libraries
         if: contains(matrix.platform.runner, 'macos')
         id: macos-libraries
@@ -183,9 +284,11 @@ jobs:
         run: |
           FRAMEWORKS_DIR="$RUNNER_TEMP/harbor-macos-frameworks-${{ matrix.platform.target }}"
           CONFIG_PATH="$RUNNER_TEMP/tauri-macos-libmpv-${{ matrix.platform.target }}.json"
+          python3 tests/test_macos_mpv_bundle.py
           python3 scripts/macos-bundle-libmpv.py prepare \
             --frameworks "$FRAMEWORKS_DIR" \
-            --config "$CONFIG_PATH"
+            --config "$CONFIG_PATH" \
+            --target "${{ matrix.platform.target }}"
           echo "HARBOR_MACOS_FRAMEWORKS_DIR=$FRAMEWORKS_DIR" >> "$GITHUB_ENV"
           echo "config=--config $CONFIG_PATH" >> "$GITHUB_OUTPUT"
 
@@ -241,6 +344,7 @@ jobs:
             exit 1
           fi
           python3 scripts/macos-bundle-libmpv.py verify-app --app "$APP_PATH"
+          python3 scripts/macos-verify-signature.py --app "$APP_PATH"
 
       - name: Archive verified macOS app for local updater signing
         if: contains(matrix.platform.runner, 'macos')
@@ -270,3 +374,39 @@ jobs:
             src-tauri/target/${{ matrix.platform.target }}/release/bundle/**/*.sig
           retention-days: 14
           if-no-files-found: warn
+
+  publish-macos:
+    name: Publish the Apple silicon installer
+    needs: build
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download the Apple silicon bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: harbor-macOS-AppleSilicon
+          path: macos-bundles
+
+      - name: Attach the Apple silicon installer to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          apple_silicon="$(find macos-bundles -type f -name '*_aarch64.dmg' -print -quit)"
+          if [ -z "$apple_silicon" ]; then
+            echo "::error::The Apple silicon leg produced no *_aarch64.dmg, so there is nothing to attach to $TAG."
+            exit 1
+          fi
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::warning::$TAG has no release, so $(basename "$apple_silicon") was not attached. This job never creates one, because releases are written by hand. Publish the release for $TAG and re-run this job, or attach the dmg from this run's harbor-macOS-AppleSilicon artifact."
+            exit 0
+          fi
+          gh release upload "$TAG" "$apple_silicon" --repo "$GITHUB_REPOSITORY" --clobber
+          echo "::notice::The Intel dmg is built and kept as the harbor-macOS-Intel workflow artifact, deliberately not attached to a release. Its bundled libmpv closure comes from Homebrew, which no longer builds Intel bottles, so the dmg declares macOS 15.0 or newer and would not launch on the Sonoma, Ventura and Monterey Macs that asked for it. To ship it, add its *_x64.dmg to this upload and drop the Intel entry's continue-on-error in the build job."
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'

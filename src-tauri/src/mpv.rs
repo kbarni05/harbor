@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -52,6 +52,7 @@ pub struct MpvStartArgs {
     pub mac_edr: Option<bool>,
     pub is_live: Option<bool>,
     pub full_download: Option<bool>,
+    pub cache_dir: Option<String>,
     pub startup_profile: Option<String>,
     pub headers: Option<HashMap<String, String>>,
     pub extra_options: Option<String>,
@@ -173,6 +174,36 @@ impl MpvState {
             lifecycle: Mutex::new(()),
         }
     }
+
+    /// The live handle, so the render target can be moved to another window without
+    /// restarting playback. A second session would re-open the stream and seek.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(crate) async fn ctx_addr(&self) -> Option<usize> {
+        let guard = self.inner.lock().await;
+        guard.as_ref().map(|session| session.mpv.ctx.as_ptr() as usize)
+    }
+}
+
+#[cfg(target_os = "macos")]
+static MAC_EDR_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+pub(crate) fn mac_edr_active() -> bool {
+    MAC_EDR_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Pause from an operating-system window event without depending on the webview
+/// being scheduled. `Some` indicates that mpv was queried successfully; the
+/// boolean says whether this call actually paused active playback.
+pub fn pause_for_background(state: &MpvState) -> Option<bool> {
+    let session = state.inner.try_lock().ok()?;
+    let mpv = session.as_ref()?.mpv.clone();
+    let paused = mpv.get_property::<bool>("pause").ok()?;
+    if paused {
+        return Some(false);
+    }
+    mpv.set_property("pause", "yes").ok()?;
+    Some(true)
 }
 
 const OBSERVED_PROPS: &[(&str, u64, PropertyKind)] = &[
@@ -327,6 +358,7 @@ fn apply_pre_init(
     args: &MpvStartArgs,
     embed_hwnd: Option<&str>,
     separate_screen: Option<i32>,
+    cache_dir: Option<&Path>,
 ) -> Result<(), String> {
     #[cfg(not(windows))]
     let _ = separate_screen;
@@ -350,7 +382,10 @@ fn apply_pre_init(
     set("title", "Harbor");
     set("audio-client-name", "Harbor");
     set("terminal", "no");
-    set("msg-level", "all=warn,vo=v,d3d11=v,gpu=v,win32=v");
+    // Verbose GPU/D3D logging can write thousands of lines while a video is
+    // running. Keep the always-on diagnostic log useful without adding disk
+    // I/O to the presentation path.
+    set("msg-level", "all=warn");
     let is_live = args.is_live.unwrap_or(false);
     set("ytdl", if is_live { "yes" } else { "no" });
     let mut user_agent = "VLC/3.0.20 LibVLC/3.0.20".to_string();
@@ -369,10 +404,10 @@ fn apply_pre_init(
         set("http-header-fields", &header_fields.join(","));
     }
     let rtx = cfg!(windows) && args.rtx_hdr.unwrap_or(false);
-    let rtx_vsr = cfg!(windows) && args.rtx_vsr.unwrap_or(false);
-    // RTX Video HDR and RTX Video Super Resolution both need native D3D11
-    // hardware frames for mpv's d3d11vpp filter.
-    let rtx_video = rtx || rtx_vsr;
+    #[cfg(windows)]
+    let rtx_vsr = args.rtx_vsr.unwrap_or(false);
+    // RTX Video HDR and RTX Video Super Resolution both use native D3D11
+    // hardware frames through mpv's d3d11vpp filter.
     let on_mac_embed = cfg!(target_os = "macos") && embed_hwnd.is_some();
     if on_mac_embed {
         set("hwdec", "videotoolbox-copy");
@@ -385,7 +420,9 @@ fn apply_pre_init(
             set("force-window", "yes");
         }
     } else if cfg!(windows) {
-        set("hwdec", if rtx_video { "d3d11va" } else { "auto-safe" });
+        // Prefer zero-copy D3D11 decoding for 4K HEVC/AV1 on Windows laptops,
+        // but retain mpv's safe fallback list for unsupported codecs/drivers.
+        set("hwdec", "d3d11va,auto-safe");
         set("force-window", "immediate");
     } else {
         set("hwdec", "auto-safe");
@@ -409,6 +446,18 @@ fn apply_pre_init(
     set("cursor-autohide", "200");
     set("volume-max", "600");
     set("sub-codepage", "utf-8");
+    let full_download = args.full_download.unwrap_or(false);
+    set("cache-on-disk", if full_download { "yes" } else { "no" });
+    if full_download {
+        if let Some(path) = cache_dir.and_then(Path::to_str) {
+            // cache-dir is an initialization-only mpv option in current builds.
+            // Applying it after Mpv::with_initializer is rejected and leaves
+            // cache-on-disk repeatedly trying the invalid '-' path.
+            if init.set_property("demuxer-cache-dir", path).is_err() {
+                set("cache-dir", path);
+            }
+        }
+    }
     let _ = init.set_property("background-color", "#000000");
     let _ = init.set_property("background", "color");
     let _ = init.set_property("media-controls", "no");
@@ -445,21 +494,33 @@ fn apply_pre_init(
     let opt = |k: &str, v: &str| {
         let _ = init.set_property(k, v);
     };
-    if rtx {
+    #[cfg(windows)]
+    {
+        // Keep decode, rendering and presentation on D3D11. gpu-next uses the
+        // target display data reported by DXGI to reshape Dolby Vision and map
+        // HDR into the calibrated output instead of forcing a fixed peak.
         opt("gpu-api", "d3d11");
-        opt("target-colorspace-hint", "yes");
+        opt("gpu-context", "d3d11");
+        opt("target-colorspace-hint", "auto");
+        opt("target-colorspace-hint-mode", "target");
+        // Avoid an extra immediate render pass for peak detection. The
+        // one-frame delayed histogram is visually equivalent and substantially
+        // friendlier to integrated and hybrid laptop GPUs at 4K.
+        opt("allow-delayed-peak-detect", "yes");
+    }
+    if rtx {
         opt("target-peak", "10000");
     } else if args.hdr_to_sdr.unwrap_or(false) {
-        opt("tone-mapping", "spline");
+        opt("tone-mapping", "bt.2446a");
         opt("gamut-mapping-mode", "perceptual");
-        opt("hdr-compute-peak", "yes");
+        opt("hdr-compute-peak", "auto");
         opt("hdr-contrast-recovery", "0.30");
         opt("hdr-peak-percentile", "99.995");
         opt("dither-depth", "auto");
         opt("target-trc", "bt.1886");
         opt("target-prim", "bt.709");
         #[cfg(any(windows, target_os = "macos"))]
-        opt("target-colorspace-hint", "yes");
+        opt("target-colorspace-hint", "auto");
         // VSR still needs the D3D11 backend even while tonemapping HDR to SDR.
         #[cfg(windows)]
         if rtx_vsr {
@@ -468,10 +529,11 @@ fn apply_pre_init(
     } else {
         #[cfg(windows)]
         {
-            opt("target-colorspace-hint", "yes");
-            if embed_hwnd.is_some() || rtx_vsr {
-                opt("gpu-api", "d3d11");
-            }
+            // target mode lets libplacebo consume Dolby Vision scene metadata
+            // and output display-matched HDR/PQ (HDR10 signaling on Windows).
+            opt("tone-mapping", "auto");
+            opt("gamut-mapping-mode", "auto");
+            opt("hdr-compute-peak", "auto");
         }
         #[cfg(target_os = "macos")]
         {
@@ -672,6 +734,14 @@ pub async fn mpv_start(
 ) -> Result<(), String> {
     #[cfg(windows)]
     let _lifecycle = state.lifecycle.lock().await;
+    let playback_cache = if args.is_live.unwrap_or(false) || !args.full_download.unwrap_or(false) {
+        None
+    } else {
+        let base = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+        let dir = crate::playback_cache::cache_dir(&base, args.cache_dir.as_deref())?;
+        crate::playback_cache::prepare_dir(&dir)?;
+        Some(dir)
+    };
     // OS-level HDR state before this transition begins. Compared at teardown
     // against the script-reported state: only off->on waits for restore.
     #[cfg(windows)]
@@ -730,6 +800,12 @@ pub async fn mpv_start(
     #[cfg(windows)]
     let mut g = state.inner.lock().await;
 
+    if let Some(dir) = &playback_cache {
+        if args.cache_dir.as_deref().is_some_and(|s| !s.trim().is_empty()) {
+            let _ = crate::temp_prune::sweep_mpv_cache(dir.clone());
+        }
+    }
+
     let want_embed = args.embed.unwrap_or(false);
     let embed_hwnd = if want_embed {
         get_main_hwnd_str(&app)
@@ -757,6 +833,8 @@ pub async fn mpv_start(
     #[cfg(not(windows))]
     let separate_screen_for_init = None;
     let args_for_init = args.clone();
+    let cache_dir = playback_cache.clone();
+    let cache_dir_for_init = cache_dir.clone();
     let init_err: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
     let init_err_cap = init_err.clone();
 
@@ -767,6 +845,7 @@ pub async fn mpv_start(
             &args_for_init,
             embed_hwnd_for_init.as_deref(),
             separate_screen_for_init,
+            cache_dir_for_init.as_deref(),
         ) {
             eprintln!("[harbor::mpv] pre-init failed: {}", e);
             if let Ok(mut g) = init_err_cap.lock() {
@@ -829,6 +908,7 @@ pub async fn mpv_start(
             .map_err(|e| format!("ns_window: {:?}", e))? as i64;
         let mpv_ctx_addr: usize = mpv.ctx.as_ptr() as usize;
         let mac_edr = args.mac_edr.unwrap_or(false);
+        MAC_EDR_ACTIVE.store(mac_edr, std::sync::atomic::Ordering::Relaxed);
         let (tx, rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
         let _ = app.run_on_main_thread(move || {
             let res = match std::ptr::NonNull::new(mpv_ctx_addr as *mut libmpv2_sys::mpv_handle) {
@@ -899,7 +979,7 @@ pub async fn mpv_start(
             "reconnect=1,reconnect_delay_max=5,reconnect_on_network_error=1",
         );
         let _ = mpv.set_property("demuxer-lavf-o", "http_seekable=0,http_persistent=0");
-        let _ = mpv.set_property("stream-buffer-size", "16MiB");
+        let _ = mpv.set_property("stream-buffer-size", "1MiB");
     } else {
         let full_dl = args.full_download.unwrap_or(false);
         let high_bitrate = args.startup_profile.as_deref() == Some("high-bitrate");
@@ -956,20 +1036,6 @@ pub async fn mpv_start(
                 "30"
             },
         );
-        if let Ok(base) = app.path().app_cache_dir() {
-            let dvr = base.join("mpv-cache");
-            let _ = std::fs::create_dir_all(&dvr);
-            if let Some(s) = dvr.to_str() {
-                // mpv renamed this to demuxer-cache-dir; the old name is
-                // rejected (M_PROPERTY_UNKNOWN) on 0.41, which leaves
-                // cache-on-disk enabled with no directory and logs
-                // "Failed to create file cache" on every load.
-                if mpv.set_property("demuxer-cache-dir", s).is_err() {
-                    let _ = mpv.set_property("cache-dir", s);
-                }
-            }
-        }
-        let _ = mpv.set_property("cache-on-disk", "yes");
         let _ = mpv.set_property("network-timeout", network_timeout_for(&args.url));
         // No reconnect_streamed: on AES-128 HLS every segment ends in a normal
         // EOF that ffmpeg then retries from offset 0, gets an empty body, and
@@ -980,10 +1046,10 @@ pub async fn mpv_start(
             Ok(()) => eprintln!("[harbor::mpv] stream-lavf-o set {}", reconnect_opts),
             Err(e) => eprintln!("[harbor::mpv] stream-lavf-o rejected: {:?}", e),
         }
-        let _ = mpv.set_property(
-            "stream-buffer-size",
-            if high_bitrate { "32MiB" } else { "16MiB" },
-        );
+        // This buffer is allocated per opened stream, including every external
+        // subtitle. A 32 MiB value multiplied memory use when many subtitles
+        // were loaded; the demuxer cache above is the correct readahead layer.
+        let _ = mpv.set_property("stream-buffer-size", "4MiB");
     }
     // mpv may auto-select an embedded subtitle as soon as loadfile runs. Keep
     // both subtitle slots empty until Harbor applies the user's language choice.
@@ -1049,6 +1115,10 @@ pub async fn mpv_start(
     );
     mpv_argv_command(&*mpv_arc, &["loadfile", &args.url, "replace"]).map_err(|e| {
         eprintln!("[harbor::mpv] loadfile FAILED: {}", e);
+        // The event loop already owns a clone while startup is in progress.
+        // Explicitly quit here so a rejected initial URL cannot leave an
+        // untracked libmpv instance alive in the background.
+        let _ = mpv_arc.command("quit", &[]);
         format!("loadfile: {}", e)
     })?;
     eprintln!("[harbor::mpv] loadfile OK");
@@ -1247,15 +1317,17 @@ fn spawn_event_loop(
                     if embedded {
                         if let Event::PropertyChange { name, .. } = &event {
                             if *name == "video-params/gamma" {
-                                let gen = reassert_gen
+                                let generation = reassert_gen
                                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                                     + 1;
-                                let gen_arc = reassert_gen.clone();
+                                let generation_ref = reassert_gen.clone();
                                 let mpv2 = mpv_keepalive.clone();
                                 let app3 = app.clone();
                                 std::thread::spawn(move || {
                                     std::thread::sleep(Duration::from_millis(250));
-                                    if gen_arc.load(std::sync::atomic::Ordering::Relaxed) != gen {
+                                    if generation_ref.load(std::sync::atomic::Ordering::Relaxed)
+                                        != generation
+                                    {
                                         return;
                                     }
                                     let gamma = mpv2
@@ -1283,8 +1355,10 @@ fn spawn_event_loop(
                                 let gamma = mpv_keepalive
                                     .get_property::<String>("video-params/gamma")
                                     .unwrap_or_default();
-                                let active = gamma == "pq" || gamma == "hlg";
-                                apply_mac_edr(&app, &mpv_keepalive, active);
+                                if !gamma.is_empty() {
+                                    let active = gamma == "pq" || gamma == "hlg";
+                                    apply_mac_edr(&app, &mpv_keepalive, active);
+                                }
                             }
                         }
                     }
@@ -1527,6 +1601,186 @@ pub async fn mpv_get_property(state: State<'_, MpvState>, name: String) -> Resul
     })
 }
 
+/// A compact, read-only snapshot for the player information overlay.  Keeping
+/// these reads inside one Tauri command avoids a burst of separate IPC calls
+/// every second while the overlay is visible.
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MpvPlaybackStats {
+    pub mpv_version: Option<String>,
+    pub video_bitrate: Option<f64>,
+    pub video_bitrate_average: Option<f64>,
+    pub audio_bitrate: Option<f64>,
+    pub audio_bitrate_average: Option<f64>,
+    pub decoder_frame_drops: Option<i64>,
+    pub output_frame_drops: Option<i64>,
+    pub source_fps: Option<f64>,
+    pub display_fps: Option<f64>,
+    pub container_fps: Option<f64>,
+    pub av_sync: Option<f64>,
+    pub video_codec: Option<String>,
+    pub video_codec_profile: Option<String>,
+    pub audio_codec: Option<String>,
+    pub audio_codec_profile: Option<String>,
+    pub audio_channels: Option<String>,
+    pub hwdec: Option<String>,
+    pub cache_ahead_sec: Option<f64>,
+    pub cache_speed: Option<f64>,
+    pub cache_buffering_percent: Option<f64>,
+    pub cached_bytes: Option<f64>,
+    pub video_width: Option<i64>,
+    pub video_height: Option<i64>,
+    pub video_pixel_format: Option<String>,
+    pub video_matrix: Option<String>,
+    pub video_primaries: Option<String>,
+    pub video_gamma: Option<String>,
+    pub video_max_luma: Option<f64>,
+    pub video_max_cll: Option<f64>,
+    pub video_max_fall: Option<f64>,
+    pub target_width: Option<i64>,
+    pub target_height: Option<i64>,
+    pub target_pixel_format: Option<String>,
+    pub target_matrix: Option<String>,
+    pub target_primaries: Option<String>,
+    pub target_gamma: Option<String>,
+    pub target_max_luma: Option<f64>,
+    pub current_vo: Option<String>,
+    pub gpu_context: Option<String>,
+    pub window_width: Option<i64>,
+    pub window_height: Option<i64>,
+}
+
+fn playback_stat_string(mpv: &Mpv, name: &str) -> Option<String> {
+    mpv.get_property::<String>(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != "no" && value != "N/A")
+}
+
+fn playback_stat_number(mpv: &Mpv, name: &str) -> Option<f64> {
+    playback_stat_string(mpv, name)?
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())
+}
+
+fn playback_stat_int(mpv: &Mpv, name: &str) -> Option<i64> {
+    playback_stat_string(mpv, name)?.parse::<i64>().ok()
+}
+
+fn value_number(value: Option<&Value>) -> Option<f64> {
+    value.and_then(|item| {
+        item.as_f64()
+            .or_else(|| item.as_str()?.trim().parse::<f64>().ok())
+    })
+}
+
+fn selected_track_stats(
+    mpv: &Mpv,
+    kind: &str,
+) -> (Option<String>, Option<String>, Option<String>, Option<f64>) {
+    let Ok(node) = mpv.get_property::<MpvNode>("track-list") else {
+        return (None, None, None, None);
+    };
+    let tracks = mpv_node_to_json(node);
+    let Some(track) = tracks.as_array().and_then(|items| {
+        items.iter().find(|item| {
+            item.get("type").and_then(Value::as_str) == Some(kind)
+                && item.get("selected").and_then(Value::as_bool) == Some(true)
+        })
+    }) else {
+        return (None, None, None, None);
+    };
+
+    let codec_profile = track
+        .get("codec-profile")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .filter(|value| !value.is_empty());
+    let channels = track
+        .get("demux-channels")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .filter(|value| !value.is_empty());
+    let codec = track
+        .get("codec")
+        .or_else(|| track.get("codec-desc"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .filter(|value| !value.is_empty());
+    let average_bitrate = track
+        .get("metadata")
+        .and_then(Value::as_object)
+        .and_then(|metadata| value_number(metadata.get("BPS")));
+    (codec, codec_profile, channels, average_bitrate)
+}
+
+#[tauri::command]
+pub async fn mpv_playback_stats(state: State<'_, MpvState>) -> Result<MpvPlaybackStats, String> {
+    let mpv = {
+        let guard = state.inner.lock().await;
+        guard
+            .as_ref()
+            .map(|session| session.mpv.clone())
+            .ok_or_else(|| "mpv not started".to_string())?
+    };
+
+    let (video_track_codec, video_codec_profile, _, video_bitrate_average) =
+        selected_track_stats(&mpv, "video");
+    let (audio_track_codec, audio_codec_profile, audio_channels, audio_bitrate_average) =
+        selected_track_stats(&mpv, "audio");
+    let cached_bytes = mpv
+        .get_property::<MpvNode>("demuxer-cache-state")
+        .ok()
+        .map(mpv_node_to_json)
+        .and_then(|state| state.get("fw-bytes").cloned())
+        .and_then(|value| value_number(Some(&value)));
+
+    Ok(MpvPlaybackStats {
+        mpv_version: playback_stat_string(&mpv, "mpv-version"),
+        video_bitrate: playback_stat_number(&mpv, "video-bitrate"),
+        video_bitrate_average,
+        audio_bitrate: playback_stat_number(&mpv, "audio-bitrate"),
+        audio_bitrate_average,
+        decoder_frame_drops: playback_stat_int(&mpv, "decoder-frame-drop-count"),
+        output_frame_drops: playback_stat_int(&mpv, "frame-drop-count"),
+        source_fps: playback_stat_number(&mpv, "estimated-vf-fps"),
+        display_fps: playback_stat_number(&mpv, "display-fps"),
+        container_fps: playback_stat_number(&mpv, "container-fps"),
+        av_sync: playback_stat_number(&mpv, "avsync"),
+        video_codec: playback_stat_string(&mpv, "video-codec").or(video_track_codec),
+        video_codec_profile,
+        audio_codec: playback_stat_string(&mpv, "audio-codec-name").or(audio_track_codec),
+        audio_codec_profile,
+        audio_channels,
+        hwdec: playback_stat_string(&mpv, "hwdec-current"),
+        cache_ahead_sec: playback_stat_number(&mpv, "demuxer-cache-duration"),
+        cache_speed: playback_stat_number(&mpv, "cache-speed"),
+        cache_buffering_percent: playback_stat_number(&mpv, "cache-buffering-state"),
+        cached_bytes,
+        video_width: playback_stat_int(&mpv, "video-params/w"),
+        video_height: playback_stat_int(&mpv, "video-params/h"),
+        video_pixel_format: playback_stat_string(&mpv, "video-params/pixelformat"),
+        video_matrix: playback_stat_string(&mpv, "video-params/colormatrix"),
+        video_primaries: playback_stat_string(&mpv, "video-params/primaries"),
+        video_gamma: playback_stat_string(&mpv, "video-params/gamma"),
+        video_max_luma: playback_stat_number(&mpv, "video-params/max-luma"),
+        video_max_cll: playback_stat_number(&mpv, "video-params/max-cll"),
+        video_max_fall: playback_stat_number(&mpv, "video-params/max-fall"),
+        target_width: playback_stat_int(&mpv, "video-target-params/w"),
+        target_height: playback_stat_int(&mpv, "video-target-params/h"),
+        target_pixel_format: playback_stat_string(&mpv, "video-target-params/pixelformat"),
+        target_matrix: playback_stat_string(&mpv, "video-target-params/colormatrix"),
+        target_primaries: playback_stat_string(&mpv, "video-target-params/primaries"),
+        target_gamma: playback_stat_string(&mpv, "video-target-params/gamma"),
+        target_max_luma: playback_stat_number(&mpv, "video-target-params/max-luma"),
+        current_vo: playback_stat_string(&mpv, "current-vo"),
+        gpu_context: playback_stat_string(&mpv, "current-gpu-context"),
+        window_width: playback_stat_int(&mpv, "window-width"),
+        window_height: playback_stat_int(&mpv, "window-height"),
+    })
+}
+
 #[tauri::command]
 pub async fn mpv_set_geometry(
     app: AppHandle,
@@ -1545,14 +1799,13 @@ pub async fn mpv_set_geometry(
     }
     #[cfg(target_os = "macos")]
     {
-        let (tx, rx) = std::sync::mpsc::sync_channel(1);
         app.run_on_main_thread(move || {
-            let _ = tx.send(crate::mpv_render_mac::resize_to(geom));
+            if let Err(error) = crate::mpv_render_mac::resize_to(geom) {
+                eprintln!("[harbor::mpv] macOS resize rejected: {error}");
+            }
         })
         .map_err(|error| format!("failed to schedule macOS mpv resize: {error}"))?;
-        return rx
-            .recv_timeout(std::time::Duration::from_millis(300))
-            .map_err(|error| format!("timed out waiting for macOS mpv resize: {error}"))?;
+        return Ok(());
     }
     #[cfg(target_os = "linux")]
     {
@@ -2407,10 +2660,71 @@ pub async fn mpv_sub_add(
     Ok(())
 }
 
+/// Remove an external subtitle track by its mpv track id.
+///
+/// A provider subtitle can be re-fetched (for example a translating addon that only
+/// serves the finished file once it is ready). Removing the previous track first lets
+/// the refreshed subtitle replace it instead of stacking a duplicate. mpv only allows
+/// this for external subtitle files, which is exactly the case here.
+#[tauri::command]
+pub async fn mpv_sub_remove(state: State<'_, MpvState>, id: String) -> Result<(), String> {
+    let mpv = {
+        let g = state.inner.lock().await;
+        g.as_ref()
+            .map(|s| s.mpv.clone())
+            .ok_or_else(|| "mpv not started".to_string())?
+    };
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("sub-remove requires a track id".to_string());
+    }
+    mpv_argv_command(&mpv, &["sub-remove", id])
+}
+
 fn sub_cache_dir() -> PathBuf {
     let dir = std::env::temp_dir().join("harbor-subs");
     let _ = std::fs::create_dir_all(&dir);
     dir
+}
+
+// Subtitle providers occasionally return a video, an error page, or a corrupt
+// archive in place of text. Keep that isolated from the player process and
+// avoid allocating unbounded memory while a subtitle is being selected.
+
+fn read_subtitle_limited(reader: impl std::io::Read, max_bytes: usize) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+
+    let mut limited = reader.take(max_bytes.saturating_add(1) as u64);
+    let mut out = Vec::with_capacity(max_bytes.min(64 * 1024));
+    limited
+        .read_to_end(&mut out)
+        .map_err(|e| format!("subtitle read: {}", e))?;
+    if out.len() > max_bytes {
+        return Err(format!(
+            "subtitle exceeds {} MiB",
+            max_bytes / (1024 * 1024)
+        ));
+    }
+    Ok(out)
+}
+
+async fn read_subtitle_response_limited(
+    mut response: reqwest::Response,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|size| size > SUBTITLE_NETWORK_LIMIT as u64)
+    {
+        return Err("subtitle exceeds 12 MiB".to_string());
+    }
+    let mut out = Vec::with_capacity(64 * 1024);
+    while let Some(chunk) = response.chunk().await.map_err(|e| format!("read: {}", e))? {
+        if out.len().saturating_add(chunk.len()) > SUBTITLE_NETWORK_LIMIT {
+            return Err("subtitle exceeds 12 MiB".to_string());
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
 }
 
 fn subtitle_extension(
@@ -2567,9 +2881,15 @@ fn prepare_subtitle_download(
 mod subtitle_download_tests {
     use super::{
         extract_subtitle_from_zip, normalize_subtitle_bytes, prepare_subtitle_download,
-        subtitle_extension, SUBTITLE_ARCHIVE_ENTRIES,
+        read_subtitle_limited, subtitle_extension, SUBTITLE_ARCHIVE_ENTRIES,
     };
     use std::io::{Cursor, Write};
+
+    #[test]
+    fn refuses_an_oversized_subtitle_body() {
+        assert!(read_subtitle_limited(&b"12345"[..], 4).is_err());
+        assert_eq!(read_subtitle_limited(&b"1234"[..], 4).unwrap(), b"1234");
+    }
 
     fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut cursor = Cursor::new(Vec::new());
@@ -2725,13 +3045,12 @@ pub async fn sub_download(
     encoding: Option<String>,
     lang: Option<String>,
 ) -> Result<String, String> {
-    use std::io::Read;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .gzip(true)
         .build()
         .map_err(|e| format!("client: {}", e))?;
-    let mut res = client
+    let res = client
         .get(&url)
         .header(
             "User-Agent",
@@ -2755,26 +3074,15 @@ pub async fn sub_download(
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_lowercase());
-    let mut raw = Vec::new();
-    while let Some(chunk) = res.chunk().await.map_err(|e| format!("read: {}", e))? {
-        if raw.len().saturating_add(chunk.len()) > SUBTITLE_NETWORK_LIMIT {
-            return Err("subtitle download size limit exceeded".to_string());
-        }
-        raw.extend_from_slice(&chunk);
-    }
+    let raw = read_subtitle_response_limited(res).await?;
     let was_gzip = raw.len() >= 2 && raw[0] == 0x1f && raw[1] == 0x8b;
     let unpacked: Vec<u8> = if was_gzip {
         let mut decoder = flate2::read::GzDecoder::new(&raw[..]);
-        let mut decoded = Vec::with_capacity(raw.len() * 4);
-        std::io::Read::take(&mut decoder, SUBTITLE_ARCHIVE_LIMIT + 1)
-            .read_to_end(&mut decoded)
+        let decoded = read_subtitle_limited(&mut decoder, SUBTITLE_ARCHIVE_LIMIT as usize)
             .map_err(|e| format!("gunzip: {}", e))?;
-        if decoded.len() as u64 > SUBTITLE_ARCHIVE_LIMIT {
-            return Err("subtitle archive inflated size limit exceeded".to_string());
-        }
         decoded
     } else {
-        raw.to_vec()
+        raw
     };
     if was_gzip && is_zip_magic(&unpacked) {
         return Err("nested subtitle archive rejected".to_string());

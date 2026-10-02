@@ -3,7 +3,7 @@ import type { PlayerBridge } from "@/lib/player/bridge";
 import type { Settings } from "@/lib/settings";
 import type { PlayerSrc } from "@/lib/view";
 import { markAddedSub } from "./added-subs";
-import { langScore, normalizeLang } from "./language";
+import { isGeneratedLangLabel, langScore, languageName, normalizeLang } from "./language";
 import {
   releaseOf,
   subtitleLoadMetadataOf,
@@ -17,7 +17,7 @@ import {
   streamMatchDetail,
   type StreamHints,
 } from "./search";
-import type { SubResult } from "./types";
+import type { GeneratedSubtitleGroup, SubResult } from "./types";
 import { prepareRankedSubtitleCandidates, prepareSubtitle } from "./prepare";
 import {
   choosePreparedCandidate,
@@ -37,8 +37,8 @@ import { releaseCompatibilityPercent } from "./release-match";
 import { isSafeProviderSubtitleUrl } from "./provider-url";
 import { SUBTITLE_PROVIDER_TIMEOUT_MS } from "./autoload";
 
-const EXTRA_TRACKS_PER_LANGUAGE = 15;
-const DEEP_EXTRA_TRACKS = 15;
+const EXTRA_TRACKS_PER_LANGUAGE = 40;
+const DEEP_EXTRA_TRACKS = 60;
 const DEEP_TIMEOUT_MS = 20_000;
 const BUILT_IN_TIMEOUT_MS = 12_000;
 const BUILT_IN_EAGER_LIMIT_PER_LANGUAGE = 1;
@@ -60,6 +60,8 @@ export type SubFetchParams = {
   settings: Settings;
   addons: Addon[];
   langs: string[];
+  /** Languages used to fetch the picker list. Empty requests every available language. */
+  searchLangs?: string[];
   searchImdbId: string | null | undefined;
   candidateIds: string[];
   season?: number;
@@ -85,7 +87,40 @@ export type SubFetchResult = {
   found: number;
   hints: StreamHints;
   selected: SubResult | null;
+  /** Generated translation offers found in this search (e.g. "Make Hindi"). */
+  generated: GeneratedSubtitleGroup[];
 };
+
+/**
+ * Detect addon entries whose "language" is really a generated label (a translating
+ * addon's "Make <language>") rather than a language code. A language code is a single
+ * token; a display label contains whitespace. Real unknown codes ("spl") are ignored.
+ */
+export function collectGeneratedSubtitleGroups(
+  results: readonly SubResult[],
+): GeneratedSubtitleGroup[] {
+  const byKey = new Map<string, GeneratedSubtitleGroup>();
+  for (const result of results) {
+    if (result.source !== "addon") continue;
+    if (!isGeneratedLangLabel(result.lang)) continue;
+    const lang = result.lang.trim();
+    const key = languageName(lang);
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      byKey.set(key, {
+        key,
+        label: lang
+          .split(/\s+/)
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" "),
+        count: 1,
+      });
+    }
+  }
+  return [...byKey.values()];
+}
 
 export type SubtitleFetchDependencies = {
   search?: typeof searchSubtitles;
@@ -209,7 +244,6 @@ export async function fetchSubtitlesIntoPlayer(
   const rankedResults = (results: SubResult[]) =>
     results
       .filter((result) => isSafeProviderSubtitleUrl(result.url))
-      .filter((r) => langScore(r.lang ?? "", p.langs) >= 0)
       .sort((a, b) => {
         const language = langScore(b.lang ?? "", p.langs) - langScore(a.lang ?? "", p.langs);
         return language !== 0 ? language : compareSubtitleMatch(a, b, hints);
@@ -283,7 +317,7 @@ export async function fetchSubtitlesIntoPlayer(
       title: p.src.meta.name,
       season: p.season,
       episode: p.episode,
-      langs: p.langs,
+      langs: p.searchLangs ?? p.langs,
       videoHash: p.videoHash,
       videoSize: p.videoSize,
       filename: subtitleStreamDescriptor(p.src.streamRef),
@@ -303,10 +337,11 @@ export async function fetchSubtitlesIntoPlayer(
     },
   );
   const results = searchedResults.filter((result) => isSafeProviderSubtitleUrl(result.url));
+  const generated = collectGeneratedSubtitleGroups(results);
 
   await progressiveQueue;
 
-  if (!p.isActive()) return { added: 0, found: results.length, hints, selected: null };
+  if (!p.isActive()) return { added: 0, found: results.length, hints, selected: null, generated };
 
   if (!deep) {
     const rankedAuto = rankSubtitleCandidates(results, p.langs, hints).filter(
@@ -432,5 +467,5 @@ export async function fetchSubtitlesIntoPlayer(
     ? spreadBySource(eagerPool, consumed, DEEP_EXTRA_TRACKS)
     : spreadBySourcePerLanguage(eagerPool, consumed, EXTRA_TRACKS_PER_LANGUAGE);
   await addCandidates(extras);
-  return { added, found: results.length, hints, selected };
+  return { added, found: results.length, hints, selected, generated };
 }

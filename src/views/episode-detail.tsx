@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Play } from "@/components/icons/play-filled";
 import type { Meta } from "@/lib/cinemeta";
@@ -7,7 +7,7 @@ import type { CastEntry } from "@/lib/providers/tmdb";
 import { fetchEpisodeData } from "@/lib/episode-data-fetcher";
 import { meta as fetchCinemetaMeta } from "@/lib/cinemeta";
 import { useSettings, type Settings } from "@/lib/settings";
-import { useScrollMemory, useView, type PlayEpisode } from "@/lib/view";
+import { useScrollMemory, useView, type EpisodeDetailPlayback, type PlayEpisode } from "@/lib/view";
 import { useT } from "@/lib/i18n";
 import { openUrl } from "@/lib/window";
 import { useOmdbScores, omdbScores as fetchOmdbScores } from "@/lib/providers/omdb";
@@ -23,12 +23,19 @@ import { Pill } from "@/views/detail/pill";
 import { PlayModeHint } from "@/views/detail/play-mode-hint";
 import { TraktComments } from "@/views/detail/trakt-comments";
 import { stremioIdToTraktTarget } from "@/lib/trakt/ids";
+import {
+  preferredEpisodeName,
+  preferredEpisodeOverview,
+  preferredEpisodeVideo,
+} from "@/lib/preferred-meta";
+import { usePreferredMeta } from "@/lib/use-preferred-meta";
 
 export interface EpisodeDetailViewProps {
   seriesId: string;
   season: number;
   episode: number;
   seriesMeta?: Meta;
+  playback?: EpisodeDetailPlayback;
 }
 
 export function EpisodeDetailView({
@@ -36,6 +43,7 @@ export function EpisodeDetailView({
   season,
   episode,
   seriesMeta: initialSeriesMeta,
+  playback,
 }: EpisodeDetailViewProps) {
   const t = useT();
   const { settings } = useSettings();
@@ -46,9 +54,17 @@ export function EpisodeDetailView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLElement>(null);
+  const lookupMeta = useMemo<Meta>(
+    () => seriesMeta ?? initialSeriesMeta ?? { id: seriesId, type: "series", name: seriesId },
+    [initialSeriesMeta, seriesId, seriesMeta],
+  );
+  const preferredMeta = usePreferredMeta(lookupMeta);
+  const preferredVideo = preferredEpisodeVideo(preferredMeta?.videos, season, episode);
+  const preferredName = preferredEpisodeName(preferredVideo);
+  const preferredOverview = preferredEpisodeOverview(preferredVideo);
 
-  const resolvedImdb = useTmdbImdbId(seriesMeta?.id);
-  const imdbId = resolvedImdb ?? (seriesMeta?.id.startsWith("tt") ? seriesMeta.id : null);
+  const resolvedImdb = useTmdbImdbId(seriesId);
+  const imdbId = resolvedImdb ?? (seriesId.startsWith("tt") ? seriesId : null);
   const omdbScores = useOmdbScores(imdbId ?? undefined);
   const episodeImdbId = episodeData?.imdbId ?? undefined;
   const episodeOmdbScores = useOmdbScores(episodeImdbId);
@@ -57,11 +73,13 @@ export function EpisodeDetailView({
     setHarborEpisodeRating(undefined);
     if (!imdbId || !imdbId.startsWith("tt")) return;
     let cancelled = false;
-    void harborImdbEpisodes(imdbId).then((map) => {
-      if (cancelled) return;
-      const r = map.get(`${season}:${episode}`);
-      if (r != null) setHarborEpisodeRating(r.toFixed(1));
-    }).catch(() => {});
+    void harborImdbEpisodes(imdbId)
+      .then((map) => {
+        if (cancelled) return;
+        const r = map.get(`${season}:${episode}`);
+        if (r != null) setHarborEpisodeRating(r.toFixed(1));
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -75,12 +93,15 @@ export function EpisodeDetailView({
     void fetchOmdbScores(settings.omdbKey, episodeImdbId).then(() => {
       if (cancelled) return;
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [settings.omdbKey, episodeImdbId]);
 
   const episodeKey = `${seriesId}:${season}:${episode}`;
   const [revealedArtwork, setRevealedArtwork] = useState<string | null>(null);
-  const artworkHidden = settings.hideSpoilers && settings.blurEpisodes && revealedArtwork !== episodeKey;
+  const artworkHidden =
+    settings.hideSpoilers && settings.blurEpisodes && revealedArtwork !== episodeKey;
   const { tmdbKey } = settings;
 
   useEffect(() => {
@@ -88,18 +109,31 @@ export function EpisodeDetailView({
     setLoading(true);
     setError(null);
     setEpisodeData(null);
+    setSeriesMeta(initialSeriesMeta ?? null);
 
     (async () => {
       try {
         let meta: Meta | undefined = initialSeriesMeta;
         if (!meta) {
           const fetched = await fetchCinemetaMeta("series", seriesId);
-          if (cancelled || !fetched) return;
+          if (cancelled) return;
+          if (!fetched) {
+            setError(t("Episode information is not available"));
+            return;
+          }
           meta = fetched;
           setSeriesMeta(meta);
         }
 
-        const data = await fetchEpisodeData(seriesId, meta, season, episode, { tmdbKey } as Settings);
+        const lookupMeta = playback?.meta.id === seriesId ? playback.meta : meta;
+        const data = await fetchEpisodeData(
+          seriesId,
+          lookupMeta,
+          season,
+          episode,
+          { tmdbKey } as Settings,
+          playback?.episode,
+        );
         if (cancelled) return;
 
         if (data) {
@@ -118,8 +152,10 @@ export function EpisodeDetailView({
       }
     })();
 
-    return () => { cancelled = true; };
-  }, [episodeKey, initialSeriesMeta, tmdbKey]);
+    return () => {
+      cancelled = true;
+    };
+  }, [episodeKey, initialSeriesMeta, playback, tmdbKey]);
 
   const getImageUrl = (path: string | null | undefined, size = "original"): string | undefined => {
     if (!path) return undefined;
@@ -127,15 +163,22 @@ export function EpisodeDetailView({
     return `https://image.tmdb.org/t/p/${size}${path}`;
   };
 
-  const background = getImageUrl(episodeData?.stillPath, "original") ?? seriesMeta?.background ?? undefined;
+  const background =
+    preferredVideo?.thumbnail ??
+    getImageUrl(episodeData?.stillPath, "original") ??
+    seriesMeta?.background ??
+    undefined;
 
   // Episode rating: hosted IMDb → OMDB (via episode IMDb ID) → TMDB vote_average → none
-  const episodeRating = harborEpisodeRating ??
+  const episodeRating =
+    harborEpisodeRating ??
     episodeOmdbScores?.imdbRating ??
     (episodeData?.voteAverage && episodeData.voteAverage > 0
-      ? episodeData.voteAverage.toFixed(1) : undefined);
+      ? episodeData.voteAverage.toFixed(1)
+      : undefined);
 
-  const seriesRating = omdbScores?.imdbRating ?? (imdbId ? seriesMeta?.imdbRating : undefined) ?? undefined;
+  const seriesRating =
+    omdbScores?.imdbRating ?? (imdbId ? seriesMeta?.imdbRating : undefined) ?? undefined;
 
   const traktResolution = stremioIdToTraktTarget(seriesId, { season, episode });
 
@@ -157,12 +200,26 @@ export function EpisodeDetailView({
       season: episodeData.seasonNumber,
       episode: episodeData.episodeNumber,
       runtime: episodeData.runtime ?? undefined,
-      name: episodeData.name,
-      still: getImageUrl(episodeData.stillPath, "w300") || undefined,
-      overview: episodeData.overview || undefined,
+      ...playback?.episode,
+      name: preferredName ?? playback?.episode?.name ?? episodeData.name,
+      still:
+        preferredVideo?.thumbnail ??
+        playback?.episode?.still ??
+        (getImageUrl(episodeData.stillPath, "w300") || undefined),
+      overview:
+        preferredOverview ?? playback?.episode?.overview ?? (episodeData.overview || undefined),
     };
-    openPicker(seriesMeta, playEpisode, { autoPlay: settings.instantPlay });
-  }, [seriesMeta, episodeData, openPicker, settings.instantPlay]);
+    openPicker(playback?.meta ?? seriesMeta, playEpisode, { autoPlay: settings.instantPlay });
+  }, [
+    seriesMeta,
+    episodeData,
+    playback,
+    openPicker,
+    preferredName,
+    preferredOverview,
+    preferredVideo?.thumbnail,
+    settings.instantPlay,
+  ]);
 
   const handleSeriesClick = useCallback(() => {
     if (seriesMeta) openMeta(seriesMeta);
@@ -214,10 +271,7 @@ export function EpisodeDetailView({
   }
 
   return (
-    <main
-      ref={scrollRef}
-      className="absolute inset-0 z-30 overflow-y-auto bg-canvas"
-    >
+    <main ref={scrollRef} className="absolute inset-0 z-30 overflow-y-auto bg-canvas">
       <section className="relative">
         <div
           data-tauri-drag-region
@@ -242,18 +296,20 @@ export function EpisodeDetailView({
                 className="mb-4 inline-flex items-center gap-1 text-[14px] font-semibold text-ink-muted transition-colors hover:text-ink"
               >
                 <ArrowLeft size={16} />
-                {seriesMeta.name}
+                {preferredMeta?.name || seriesMeta.name}
               </button>
 
               <TitlePlate
-                title={`S${episodeData.seasonNumber}E${episodeData.episodeNumber} — ${episodeData.name}`}
+                title={`S${episodeData.seasonNumber}E${episodeData.episodeNumber} — ${preferredName || episodeData.name}`}
                 loading={false}
               />
 
               <div className="mt-6 flex flex-wrap items-center gap-3 text-[13px] font-medium text-ink-muted">
                 {episodeData.airDate && (
                   <Pill>
-                    {t("Aired {date}", { date: new Date(episodeData.airDate).toLocaleDateString() })}
+                    {t("Aired {date}", {
+                      date: new Date(episodeData.airDate).toLocaleDateString(),
+                    })}
                   </Pill>
                 )}
                 {episodeData.runtime && episodeData.runtime > 0 && (
@@ -296,8 +352,8 @@ export function EpisodeDetailView({
       </section>
 
       <div className="flex flex-col gap-16 px-12 pb-24 pt-14">
-        {episodeData.overview && (
-          <Synopsis text={episodeData.overview} />
+        {(preferredOverview || episodeData.overview) && (
+          <Synopsis text={preferredOverview || episodeData.overview} />
         )}
 
         {episodeData.guestStars && episodeData.guestStars.length > 0 && (
@@ -306,13 +362,15 @@ export function EpisodeDetailView({
               {episodeData.guestStars.map((star, i) => (
                 <CastCard
                   key={`${star.id}-${i}`}
-                  cast={{
-                    id: star.id,
-                    name: star.name,
-                    character: star.character,
-                    profilePath: star.profilePath,
-                    order: i,
-                  } as CastEntry}
+                  cast={
+                    {
+                      id: star.id,
+                      name: star.name,
+                      character: star.character,
+                      profilePath: star.profilePath,
+                      order: i,
+                    } as CastEntry
+                  }
                 />
               ))}
             </Row>
@@ -341,7 +399,7 @@ export function EpisodeDetailView({
                 >
                   <img
                     src={getImageUrl(still.filePath, "w780")}
-                    alt={`${episodeData.name} — ${t("Still {n}", { n: idx + 1 })}`}
+                    alt={`${preferredName || episodeData.name} — ${t("Still {n}", { n: idx + 1 })}`}
                     loading="lazy"
                     className={`h-full w-full object-cover ${artworkHidden ? "scale-105 blur-[24px]" : "transition-transform duration-300 group-hover:scale-105"}`}
                   />

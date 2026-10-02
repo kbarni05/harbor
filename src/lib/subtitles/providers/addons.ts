@@ -2,7 +2,7 @@ import { addonAccepts, type Addon } from "@/lib/addons";
 import { safeFetch } from "@/lib/safe-fetch";
 import { dlog } from "@/lib/debug";
 import type { SubResult, SubSearchQuery } from "../types";
-import { isPlausibleLang, normalizeLang } from "../language";
+import { normalizeSubtitleLang } from "../language";
 import { withSubtitleTimeout } from "../autoload";
 import {
   classifyProviderSubtitleMetadata,
@@ -17,8 +17,9 @@ import {
 
 type RawAddonSub = ProviderSubtitleFlags & {
   id?: string;
-  url: string;
-  lang: string;
+  url?: string;
+  lang?: string | null;
+  language?: string | null;
   m?: string;
   SubFormat?: string;
   fps?: number | string;
@@ -27,6 +28,7 @@ type RawAddonSub = ProviderSubtitleFlags & {
   provider?: string;
   source?: string;
   name?: string;
+  label?: string;
   addon?: string;
 };
 
@@ -125,17 +127,30 @@ async function callOne(
       enrichedBudget,
       [],
     );
-    if (enriched.length > 0) return enriched;
 
     const elapsed = Date.now() - startedAt;
     const remaining = Math.max(1_000, timeoutMs - elapsed);
     const bareUrl = `${base}/subtitles/${type}/${id}.json`;
-    dlog(`[addons] ${addon.manifest.name} retrying without stream hints`);
-    return await withSubtitleTimeout(
+    dlog(`[addons] ${addon.manifest.name} also checking without stream hints`);
+    const bare = await withSubtitleTimeout(
       fetchAddonSubtitles(bareUrl, addon.manifest.name),
       remaining,
       [],
     );
+
+    // Enriched endpoints improve file matching, but a number of translation
+    // addons return only a tool/action entry there and publish the actual
+    // translated tracks on the standard endpoint. Merge both responses so a
+    // non-empty enriched response cannot suppress the real subtitles.
+    const merged: RawAddonSub[] = [];
+    const seen = new Set<string>();
+    for (const subtitle of [...enriched, ...bare]) {
+      const key = `${subtitle.id ?? ""}|${subtitle.url ?? ""}|${subtitle.lang ?? subtitle.language ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(subtitle);
+    }
+    return merged;
   } catch {
     dlog(`[addons] ${addon.manifest.name} request failed`);
     return [];
@@ -198,7 +213,7 @@ export async function searchAddons(
     const addonName = targets[i].addon.manifest.name;
     for (let idx = 0; idx < subs.length; idx++) {
       const s = subs[idx];
-      if (!s.url || !isSafeProviderSubtitleUrl(s.url) || !isPlausibleLang(s.lang)) continue;
+      if (!s.url || !isSafeProviderSubtitleUrl(s.url)) continue;
       // Include addon name and index to ensure unique IDs across different addons
       const uniqueId = s.id
         ? `${addonName.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${s.id}`
@@ -207,9 +222,12 @@ export async function searchAddons(
       out.push({
         id: uniqueId,
         url: s.url,
-        lang: normalizeLang(s.lang),
+        // Stremio's ecosystem contains useful translation addons that do not
+        // declare a language. Keep those results visible under "Unknown".
+        lang: normalizeSubtitleLang(s.lang ?? s.language),
         title: addonName,
         displayTitle,
+        label: s.label?.trim() || undefined,
         source: "addon",
         format: (s.SubFormat?.toLowerCase() as SubResult["format"]) || undefined,
         release: s.m || undefined,

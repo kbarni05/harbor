@@ -4,6 +4,8 @@ import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
 import { HIDE_SCROLL } from "./data";
 import { SectionTitle } from "./ui";
+import { mergePreferredMeta } from "@/lib/preferred-meta";
+import { usePreferredMeta } from "@/lib/use-preferred-meta";
 
 export function RecRail({
   title,
@@ -20,15 +22,17 @@ export function RecRail({
       <SectionTitle>{t(title)}</SectionTitle>
       <div className={`-mx-5 flex snap-x snap-proximity gap-3 overflow-x-auto px-5 ${HIDE_SCROLL}`}>
         {items.slice(0, 20).map((m) => (
-          <RecCard key={m.id} meta={m} onOpen={() => onOpen(m)} />
+          <RecCard key={m.id} meta={m} onOpen={onOpen} />
         ))}
       </div>
     </section>
   );
 }
 
-function RecCard({ meta, onOpen }: { meta: Meta; onOpen: () => void }) {
+function RecCard({ meta, onOpen }: { meta: Meta; onOpen: (meta: Meta) => void }) {
   const { settings } = useSettings();
+  const preferredMeta = usePreferredMeta(meta);
+  const displayMeta = mergePreferredMeta(meta, preferredMeta);
   const { src, onError } = usePosterChain(
     settings.rpdbKey,
     meta.id,
@@ -38,7 +42,7 @@ function RecCard({ meta, onOpen }: { meta: Meta; onOpen: () => void }) {
   return (
     <button
       type="button"
-      onClick={onOpen}
+      onClick={() => onOpen(displayMeta)}
       className="flex w-[104px] shrink-0 snap-start flex-col gap-2 text-start transition-transform active:scale-[0.97] motion-reduce:transition-none"
     >
       <Poster
@@ -50,7 +54,7 @@ function RecCard({ meta, onOpen }: { meta: Meta; onOpen: () => void }) {
         className="rounded-xl ring-1 ring-edge-soft/60"
       />
       <p className="line-clamp-2 text-[12px] font-medium leading-tight text-ink-muted">
-        {meta.name}
+        {displayMeta.name}
       </p>
     </button>
   );

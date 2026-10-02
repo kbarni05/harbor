@@ -68,6 +68,8 @@ mod discord_rp;
 #[cfg(desktop)]
 mod display_fit;
 #[cfg(desktop)]
+mod dj_deck;
+#[cfg(desktop)]
 mod dlna;
 #[cfg(desktop)]
 mod dvr;
@@ -86,6 +88,8 @@ mod taskbar;
 mod modal_overlay;
 #[cfg(desktop)]
 mod mpv;
+#[cfg(desktop)]
+mod playback_cache;
 #[cfg(target_os = "linux")]
 mod mpv_render_linux;
 #[cfg(target_os = "macos")]
@@ -96,6 +100,7 @@ mod multiview;
 mod music;
 #[cfg(desktop)]
 mod pip;
+mod pip_window;
 #[cfg(target_os = "macos")]
 mod pip_mac;
 #[cfg(desktop)]
@@ -726,6 +731,7 @@ pub fn run() {
     win_graphics::configure_windows_graphics();
     let _ = rustls::crypto::ring::default_provider().install_default();
     trailer::sweep_cache();
+    std::thread::spawn(trailer::sweep_ytdlp_extractions);
     std::thread::spawn(temp_prune::sweep_temp);
 
     let proxy_state = tauri::async_runtime::block_on(stream_proxy::ProxyState::start())
@@ -735,6 +741,7 @@ pub fn run() {
         });
     let mpv_state = mpv::MpvState::new();
     let pip_state = pip::PipState::new();
+    let pip_window_state = pip_window::PipWindowState::default();
     let fullscreen_state = fullscreen::FullscreenState::new();
     let thumbs_state = thumbs::ThumbsState::new();
     let dvr_state = dvr::DvrState::new();
@@ -788,6 +795,7 @@ pub fn run() {
         .manage(mpv_state)
         .manage(music::MusicState::new())
         .manage(pip_state)
+        .manage(pip_window_state)
         .manage(fullscreen_state)
         .manage(thumbs_state)
         .manage(dvr_state)
@@ -933,6 +941,26 @@ pub fn run() {
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     if tray::close_to_tray() {
                         api.prevent_close();
+                        // Hiding a Tauri window does not reliably emit a focus event on every
+                        // desktop platform. Pause mpv here, then notify the renderer so it can
+                        // remember that this was an automatic pause and resume only that case.
+                        use tauri::Emitter;
+                        let was_playing = if tray::pause_when_minimized() {
+                            window
+                                .app_handle()
+                                .try_state::<mpv::MpvState>()
+                                .and_then(|state| mpv::pause_for_background(&state))
+                        } else {
+                            None
+                        };
+                        let mut activity = serde_json::json!({ "focused": false, "minimized": true });
+                        if let Some(was_playing) = was_playing {
+                            activity["wasPlaying"] = serde_json::Value::Bool(was_playing);
+                        }
+                        let _ = window.emit(
+                            "harbor://window-activity",
+                            activity,
+                        );
                         let _ = window.hide();
                     } else if !CLOSE_IN_PROGRESS.swap(true, std::sync::atomic::Ordering::SeqCst) {
                         use tauri::Emitter;
@@ -1048,6 +1076,9 @@ pub fn run() {
             music::music_spotify_status,
             music::music_spotify_connect,
             music::music_spotify_disconnect,
+            music::music_spotify_devices,
+            music::music_spotify_set_device,
+            music::music_spotify_device,
             music::music_spotify_library_page,
             music::music_spotify_create_playlist,
             music::music_spotify_add_to_playlist,
@@ -1081,13 +1112,42 @@ pub fn run() {
             music::music_export_m3u,
             music::music_play_track,
             music::music_engine_pause,
+            music::music_paused_for_video,
+            music::music_resume_after_video,
             music::music_engine_seek,
+            music::music_deck_loop,
+            music::music_deck_scratch,
+            music::music_prewarm_track,
+            music::music_scratch_window,
+            music::music_scratch_hold,
+            music::music_cable_status,
+            music::music_cable_create,
+            music::music_cable_destroy,
+            music::music_deck_play,
+            music::music_deck_pause,
+            music::music_deck_seek,
+            music::music_deck_volume,
+            music::music_deck_stop,
+            music::music_deck_states,
+            music::music_deck_primary,
+            music::music_deck_crossfade,
+            music::music_deck_crossfade_get,
+            music::music_fx_set,
+            music::music_fx_clear,
+            music::music_fx_get,
             music::music_engine_set_volume,
             music::music_audio_devices,
             music::music_audio_settings_get,
             music::music_audio_meter_set_enabled,
             music::music_audio_meter_snapshot,
             music::music_audio_settings_set,
+            music::music_export_filtered,
+            music::music_broadcast_targets,
+            music::music_broadcast_start,
+            music::music_broadcast_stop,
+            music::music_broadcast_status,
+            dj_deck::dj_deck_open,
+            dj_deck::dj_deck_close,
             music::music_engine_stop,
             music::music_home_rows,
             music::music_browse_connector,
@@ -1100,6 +1160,7 @@ pub fn run() {
             music::music_search_typed,
             music::music_video_stream,
             music::music_search_videos,
+            music::music_search_video_page,
             music::music_connections,
             music::music_connect,
             music::music_disconnect,
@@ -1121,6 +1182,7 @@ pub fn run() {
             mpv::mpv_command,
             mpv::mpv_set_property,
             mpv::mpv_get_property,
+            mpv::mpv_playback_stats,
             mpv::mpv_audio_devices,
             mpv::mpv_set_geometry,
             mpv::mpv_force_below,
@@ -1153,8 +1215,10 @@ pub fn run() {
             hdr_overlay::hdr_overlay_hide,
             hdr_overlay::hdr_overlay_sync,
             hdr_overlay::hdr_overlay_emit_props,
+            hdr_overlay::hdr_overlay_emit_clock,
             hdr_overlay::hdr_overlay_emit_action,
             mpv::mpv_sub_add,
+            mpv::mpv_sub_remove,
             mpv::sub_download,
             mpv::mpv_stop,
             mpv::mpv_release_media,
@@ -1165,6 +1229,10 @@ pub fn run() {
             pip::pip_publish_state,
             pip::window_pip_enter,
             pip::window_pip_exit,
+            pip_window::pip_window_enter,
+            pip_window::pip_window_exit,
+            pip_window::pip_window_fit,
+            pip_window::pip_window_active,
             fullscreen::window_fullscreen_enter,
             fullscreen::window_fullscreen_exit,
             browser::browser_open,
@@ -1211,10 +1279,13 @@ pub fn run() {
             capstan::capstan_search,
             capstan::capstan_load,
             capstan::capstan_load_links,
+            capstan::capstan_catalogue,
+            capstan::capstan_catalogue_page,
             discord_rp::discord_set_presence,
             discord_rp::discord_clear,
             media_controls::media_controls_update,
             media_controls::media_controls_music_state,
+            media_controls::media_controls_music_art,
             media_controls::media_controls_seeked,
             media_controls::media_controls_clear,
             gamepad::gamepad_list,

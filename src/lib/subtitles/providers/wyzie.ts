@@ -1,5 +1,5 @@
 import type { SubResult, SubSearchQuery } from "../types";
-import { isKnownLanguage, normalizeLang } from "../language";
+import { isKnownLanguage, normalizeLang, normalizeSubtitleLang } from "../language";
 import { safeFetch } from "@/lib/safe-fetch";
 
 const ENDPOINT = "https://sub.wyzie.io/search";
@@ -60,7 +60,7 @@ export async function searchWyzie(
       ? normalizeLang(r.language)
       : isKnownLanguage(r.display)
         ? normalizeLang(r.display)
-        : normalizeLang(r.language);
+        : normalizeSubtitleLang(r.language);
     const fmt = (r.format || "").toLowerCase();
     out.push({
       id: `wyzie:${r.id ?? r.url}`,

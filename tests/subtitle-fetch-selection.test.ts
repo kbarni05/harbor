@@ -300,16 +300,19 @@ test("automatic discovery gives slow subtitle addons the full provider timeout",
   assert.equal(timeoutMs, SUBTITLE_PROVIDER_TIMEOUT_MS);
 });
 
-test("automatic discovery progressively exposes 12 tracks and finishes at 15", async () => {
-  const candidates = Array.from({ length: 20 }, (_, index): SubResult => ({
-    ...top,
-    id: `arabic-${index}`,
-    url: `https://subs.test/arabic-${index}.srt`,
-    lang: "ar",
-    source: "addon",
-    title: "Subtitle addon",
-    providerMatch: { confidence: "exact", score: 1 - index / 100 },
-  }));
+test("automatic discovery progressively exposes 37 tracks and finishes at 40", async () => {
+  const candidates = Array.from(
+    { length: 50 },
+    (_, index): SubResult => ({
+      ...top,
+      id: `arabic-${index}`,
+      url: `https://subs.test/arabic-${index}.srt`,
+      lang: "ar",
+      source: "addon",
+      title: "Subtitle addon",
+      providerMatch: { confidence: "exact", score: 1 - index / 100 },
+    }),
+  );
   const calls: string[] = [];
   let releaseSearch!: () => void;
   const searchGate = new Promise<void>((resolve) => {
@@ -347,13 +350,13 @@ test("automatic discovery progressively exposes 12 tracks and finishes at 15", a
     },
   );
 
-  for (let attempt = 0; attempt < 20 && calls.length < 12; attempt += 1) {
+  for (let attempt = 0; attempt < 20 && calls.length < 37; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
-  assert.equal(calls.length, 12);
+  assert.equal(calls.length, 37);
 
   releaseSearch();
   const result = await fetchPromise;
-  assert.equal(result.added, 15);
-  assert.equal(new Set(calls).size, 15);
+  assert.equal(result.added, 40);
+  assert.equal(new Set(calls).size, 40);
 });
