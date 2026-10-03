@@ -39,12 +39,26 @@ jobs:
       - name: Declare missing extension runtime
         run: |
           "HARBOR_CAPSTAN_SRC=$(Join-Path $env:RUNNER_TEMP 'absent-reference-capstan')" | Add-Content $env:GITHUB_ENV
-      - name: Prepare upstream 0.9.129 native assets
+      - name: Prepare native build dependencies
         run: |
           foreach ($script in @('setup:libmpv', 'setup:binaries', 'setup:mpv', 'setup:fonts')) {
             & pnpm run $script
             if ($LASTEXITCODE -ne 0) { throw "Asset staging failed: $script" }
           }
+      - name: Retain the supplied 0.9.127 media components
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $download = Join-Path $env:RUNNER_TEMP 'reference-original'
+          $referenceName = 'Harbor_0.9.127_cloud-settings-sync_no-extension-runtime_x64-setup.exe'
+          gh release download v0.9.127-cloud-sync.1 --repo $env:GITHUB_REPOSITORY --pattern $referenceName --dir $download
+          if ($LASTEXITCODE -ne 0) { throw 'Reference download failed' }
+          $reference = Join-Path $download $referenceName
+          if ((Get-FileHash $reference).Hash.ToLowerInvariant() -ne 'c5f295521b259d3cec98d6ad06ee12e8024816158ca2c5402d086ea3272d255e') { throw 'Wrong reference installer' }
+          $payload = Join-Path $env:RUNNER_TEMP 'reference-original-payload'
+          7z x -y $reference "-o$payload"
+          if ($LASTEXITCODE -ne 0) { throw 'Reference extraction failed' }
+          ./scripts/stage-reference-media.ps1 -ReferencePayload $payload
       - name: Check frontend types
         run: pnpm run typecheck
       - name: Test preserved reference functionality
@@ -95,13 +109,11 @@ jobs:
           }
           $download = Join-Path $env:RUNNER_TEMP 'reference-original'
           $referenceName = 'Harbor_0.9.127_cloud-settings-sync_no-extension-runtime_x64-setup.exe'
-          gh release download v0.9.127-cloud-sync.1 --repo $env:GITHUB_REPOSITORY --pattern $referenceName --dir $download
-          if ($LASTEXITCODE -ne 0) { throw 'Reference download failed' }
           $reference = Join-Path $download $referenceName
           if ((Get-FileHash $reference).Hash.ToLowerInvariant() -ne 'c5f295521b259d3cec98d6ad06ee12e8024816158ca2c5402d086ea3272d255e') { throw 'Wrong reference installer' }
           New-Item -ItemType Directory artifacts | Out-Null
           ./scripts/test-windows-installer.ps1 -Installer $installer.FullName -ReferenceInstaller $reference -ExpectedPayload $extracted -TestDirectory (Join-Path $env:RUNNER_TEMP 'reference-install-smoke') -ReportPath artifacts/INSTALL-TEST.json
-          $name = 'Harbor_0.9.129_reference-0.9.127_cloud-settings-sync_no-extension-runtime_x64-setup.exe'
+          $name = 'Harbor_0.9.129_reference-media_cloud-settings-sync_no-extension-runtime_x64-setup.exe'
           Copy-Item $installer.FullName "artifacts/$name"
           "$((Get-FileHash "artifacts/$name").Hash.ToLowerInvariant())  $name" | Set-Content artifacts/SHA256SUMS.txt
           Copy-Item docs/reference-exe-reconstruction.json artifacts/REFERENCE-RECONSTRUCTION.json

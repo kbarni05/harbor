@@ -16,6 +16,8 @@
   },
   "customSourceChanges": "13 cloud-settings source/test files retained; no separate Hungarian/player branch merged",
   "installerPolicy": "Original NSIS current-user mode, original hooks and default WebView2 bootstrap policy retained; no offline runtime installer repair introduced",
+  "mediaComponentPolicy": "Copy libmpv-2.dll, mpv.exe, ffmpeg.exe, ffprobe.exe and yt-dlp.exe from the supplied installer after validating their exact SHA-256; do not substitute current upstream media binaries",
+  "functionalParityStatus": "Under investigation after user reported playback, settings and custom-function differences; build/install checks do not establish full parity",
   "limits": [
     "Native machine code cannot prove byte-identical source reconstruction",
     "Official 0.9.129 source commit is not published; public beta snapshot is pinned"
