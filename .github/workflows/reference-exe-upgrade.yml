@@ -1,0 +1,152 @@
+name: Reference EXE upgrade
+
+on:
+  push:
+    branches: [recovery/reference-exe-0.9.129]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: 4
+      NODE_OPTIONS: --max-old-space-size=6144
+      HARBOR_CAPSTAN_OPTIONAL: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: "true"
+      - run: pnpm install --frozen-lockfile
+      - name: Declare missing extension runtime
+        run: |
+          "HARBOR_CAPSTAN_SRC=$(Join-Path $env:RUNNER_TEMP 'absent-reference-capstan')" | Add-Content $env:GITHUB_ENV
+      - name: Prepare upstream 0.9.129 native assets
+        run: |
+          foreach ($script in @('setup:libmpv', 'setup:binaries', 'setup:mpv', 'setup:fonts')) {
+            & pnpm run $script
+            if ($LASTEXITCODE -ne 0) { throw "Asset staging failed: $script" }
+          }
+      - name: Check frontend types
+        run: pnpm run typecheck
+      - name: Test preserved reference functionality
+        run: >-
+          node --experimental-loader ./scripts/node-test-loader.mjs --test
+          tests/cloud-settings-sync.test.ts tests/reference-exe-upgrade.test.mjs
+      - name: Test strict NSIS comparison
+        run: ./scripts/test-nsis-payload.ps1
+      - name: Check Windows source
+        run: |
+          $env:TAURI_CONFIG = Get-Content src-tauri/tauri.reference-windows.conf.json -Raw
+          cargo check --manifest-path src-tauri/Cargo.toml --release --locked --target x86_64-pc-windows-msvc
+      - name: Build reference upgrade
+        run: pnpm tauri build --config src-tauri/tauri.reference-windows.conf.json --target x86_64-pc-windows-msvc --bundles nsis -- --locked
+      - name: Preserve build output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reference-windows-build-output
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Verify payload and test installation lifecycle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git diff --exit-code -- package.json pnpm-lock.yaml src-tauri/Cargo.lock
+          if ($LASTEXITCODE -ne 0) { throw 'Build changed locked manifests' }
+          $release = 'src-tauri/target/x86_64-pc-windows-msvc/release'
+          $installers = @(Get-ChildItem "$release/bundle/nsis" -File -Filter '*.exe')
+          if ($installers.Count -ne 1) { throw 'Expected one installer' }
+          $installer = $installers[0]
+          $extracted = Join-Path $env:RUNNER_TEMP 'reference-upgrade-payload'
+          7z x -y $installer.FullName "-o$extracted"
+          if ($LASTEXITCODE -ne 0) { throw 'Extraction failed' }
+          ./scripts/verify-nsis-payload.ps1 -Compiled "$release/harbor.exe" -Packaged "$extracted/harbor.exe"
+          $inputs = @{
+            'libmpv-2.dll' = 'src-tauri/libmpv/libmpv-2.dll'
+            'mpv.exe' = 'src-tauri/binaries/mpv-x86_64-pc-windows-msvc.exe'
+            'ffmpeg.exe' = 'src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe'
+            'ffprobe.exe' = 'src-tauri/binaries/ffprobe-x86_64-pc-windows-msvc.exe'
+            'yt-dlp.exe' = 'src-tauri/binaries/yt-dlp-x86_64-pc-windows-msvc.exe'
+          }
+          foreach ($name in $inputs.Keys) {
+            if ((Get-FileHash "$extracted/$name").Hash -ne (Get-FileHash $inputs[$name]).Hash) { throw "Stale asset: $name" }
+          }
+          $download = Join-Path $env:RUNNER_TEMP 'reference-original'
+          $referenceName = 'Harbor_0.9.127_cloud-settings-sync_no-extension-runtime_x64-setup.exe'
+          gh release download v0.9.127-cloud-sync.1 --repo $env:GITHUB_REPOSITORY --pattern $referenceName --dir $download
+          if ($LASTEXITCODE -ne 0) { throw 'Reference download failed' }
+          $reference = Join-Path $download $referenceName
+          if ((Get-FileHash $reference).Hash.ToLowerInvariant() -ne 'c5f295521b259d3cec98d6ad06ee12e8024816158ca2c5402d086ea3272d255e') { throw 'Wrong reference installer' }
+          New-Item -ItemType Directory artifacts | Out-Null
+          ./scripts/test-windows-installer.ps1 -Installer $installer.FullName -ReferenceInstaller $reference -ExpectedPayload $extracted -TestDirectory (Join-Path $env:RUNNER_TEMP 'reference-install-smoke') -ReportPath artifacts/INSTALL-TEST.json
+          $name = 'Harbor_0.9.129_reference-0.9.127_cloud-settings-sync_no-extension-runtime_x64-setup.exe'
+          Copy-Item $installer.FullName "artifacts/$name"
+          "$((Get-FileHash "artifacts/$name").Hash.ToLowerInvariant())  $name" | Set-Content artifacts/SHA256SUMS.txt
+          Copy-Item docs/reference-exe-reconstruction.json artifacts/REFERENCE-RECONSTRUCTION.json
+          "$env:GITHUB_SHA" | Set-Content artifacts/SOURCE-COMMIT.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reference-windows-verified-installer
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: 4
+      CARGO_PROFILE_DEV_DEBUG: 0
+      NODE_OPTIONS: --max-old-space-size=6144
+      HARBOR_CAPSTAN_OPTIONAL: "1"
+      HARBOR_CAPSTAN_SRC: /tmp/absent-reference-capstan
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - run: pnpm install --frozen-lockfile
+      - name: Linux build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libayatana-appindicator3-dev libgtk-3-dev libmpv-dev librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: "true"
+      - run: pnpm run setup:fonts
+      - name: Check and test native Linux source
+        env:
+          TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
+        run: |
+          cargo check --manifest-path src-tauri/Cargo.toml --locked
+          cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Build full Linux application
+        run: pnpm tauri:build:linux-system --bundles deb --config src-tauri/tauri.reference-linux.conf.json -- --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reference-linux-build-check
+          path: src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+          retention-days: 3

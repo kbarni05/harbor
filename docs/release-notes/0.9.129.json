@@ -1,0 +1,160 @@
+{
+  "notes": {
+    "0.9.129": {
+      "title": "Harbor Beta 0.9.129",
+      "intro": "This beta includes Music, Sports and eBook updates alongside fixes across playback, anime, Continue Watching, subtitles, sources, libraries and navigation. These expanded notes describe the changes included in 0.9.129.",
+      "sections": [
+        {
+          "heading": "Music",
+          "items": [
+            "Restored the circular Like burst across the bottom bar, Now playing, Quick listen and track rows.",
+            "Cleaned up the Last.fm, Jellyfin and Spotify connection screens, including redundant fields and nested boxes.",
+            "Expanded Explore with seasonal picks and rows based on your listening habits. Genre pages continue into a full grid with Albums, Songs and Artists views.",
+            "Added the hip-hop XXL Freshman row with past classes and automatic discovery of new years.",
+            "Carried explicit-content badges into Daily mixes and other mix track lists.",
+            "Added Open playlist or mix to the bottom-bar artwork menu. Quick-strip playback stays on the page you are using.",
+            "Spotify catalog playlists now load beyond the first 50 tracks, preserving track order and handling later-page failures.",
+            "An explicitly selected music provider stays selected when playback fails, instead of silently switching to another service.",
+            "Large playlists render the visible rows while retaining the complete playback queue, with faster filtering and preserved scroll position.",
+            "Improved Daily and Artist mixes, music-video discovery and progressive Fresh releases loading.",
+            "Surprise me reuses one bounded mix instead of accumulating new mix pages, with refreshed selections and better artist variety.",
+            "Quick listen supports mouse-wheel volume adjustment and a subtle scroll indicator. Artist names only scroll on hover when they are actually truncated.",
+            "Smoothed the compact artist and playlist headers that appear as you scroll."
+          ]
+        },
+        {
+          "heading": "Sports",
+          "items": [
+            "Fighter records now appear below names on UFC and MMA pages.",
+            "Large-field events such as golf and PGA place watch controls and sources above the participant list.",
+            "Fixed the live/upcoming ticker and Live tab so the rail scrolls horizontally without hiding scores.",
+            "Improved athlete portraits, competition coverage and league-guide navigation.",
+            "Fixed Choose your sports in the Sports hero so it opens customization."
+          ]
+        },
+        {
+          "heading": "Playback and Watch Together",
+          "items": [
+            "Fixed fullscreen re-entry overwriting the saved window bounds, so leaving fullscreen can restore the original window size.",
+            "Added a separate playback-cache folder setting for native video playback. The existing P2P cache setting remains separate.",
+            "Fixed Anime4K activation for recognized anime and applying shader or mode changes during playback.",
+            "Kept outgoing episode progress separate from a newly loaded episode, preventing stale duration or position from marking the wrong episode watched.",
+            "Cancelled obsolete source-recovery work so a delayed result cannot replace playback or reopen the picker for an earlier title.",
+            "Corrected paused buffering state so pause and loading feedback remain consistent.",
+            "Improved Windows media-key ownership so paused or unfocused Harbor does not unnecessarily take over another app, with more reliable media-session updates.",
+            "Restored Watch Together reconnection after an established room loses its connection.",
+            "Corrected Watch Together timing at different playback speeds, paused joins and episode changes."
+          ]
+        },
+        {
+          "heading": "Anime and Continue Watching",
+          "items": [
+            "Fixed malformed anime mappings moving ordinary episodes into Extras or dropping season episodes.",
+            "Preserved split-cour episode identity, titles, thumbnails and source coordinates through episode details and playback.",
+            "Anime Resume now opens the saved episode even when its season has not finished loading.",
+            "AniList and MyAnimeList progress uses the episode number within the owning entry, preventing a later cour from being completed prematurely.",
+            "Fixed SIMKL paused-playback timestamps and supported episode-number response formats when importing Continue Watching.",
+            "Kept existing Continue Watching entries when one connected tracker temporarily fails, and retried incomplete refreshes.",
+            "Improved next-episode advancement from connected tracker completion while preserving newer rewatches, manual unwatched choices and dismissals.",
+            "Dismissing a visible Up Next card removes it immediately instead of waiting for a reload.",
+            "Fixed private Continue Watching, resume positions and dismissals for profiles sharing a Stremio account, without borrowing another profileâ€™s progress.",
+            "Improved placement of mapped animated titles and enabled Trakt progress in the anime Continue Watching rows when allowed by profile settings.",
+            "Fixed watched movies still showing stale Resume progress on hover, including saved progress without runtime metadata.",
+            "Preserved add-on episode air dates so the existing autoplay check can skip known unaired episodes.",
+            "Updated SIMKL calendars to the v2 schedule/metadata format and improved bounded retry handling and watchlist identity."
+          ]
+        },
+        {
+          "heading": "Subtitles, sources and add-ons",
+          "items": [
+            "Improved SubMaker translation offers, manual generation, pending/retry feedback and completed-subtitle loading across subtitle menus.",
+            "Bitmap subtitles remain available as primary subtitles but are no longer offered in the unsupported secondary text-subtitle slot.",
+            "Restored secondary text subtitles in native HDR playback, including readiness and cleanup handling.",
+            "Source filtering set to Off now also bypasses the earlier anime episode filter.",
+            "Fixed add-on episode selection in grid and strip layouts by preserving the add-onâ€™s original video ID.",
+            "Improved source-loading concurrency, incremental results, library/cache badges and recovery from provider errors.",
+            "Fixed native Copy stream link with browser fallback and valid magnet handling, including encoded filenames and tracker addresses.",
+            "Showed separate configured installations of the same add-on so removing one does not remove another configuration.",
+            "Manage installed add-ons now opens the Installed tab even when the add-on page was already mounted.",
+            "Improved local add-on access and Suwayomi extension-update/recheck errors without hiding explicit server refusals.",
+            "Added access to saved Suwayomi categories while retaining category order and the correct server/source identity.",
+            "Fixed AllDebrid playback compatibility with both array and single-item magnet-status responses.",
+            "Decoded encoded Xtream channel and library titles correctly."
+          ]
+        },
+        {
+          "heading": "Library, metadata and navigation",
+          "items": [
+            "Removed local-library entries stay removed through refreshes and automatic scans until explicitly imported again.",
+            "Imports and edits made while the local library is loading no longer overwrite the previously saved library.",
+            "Removing a title from Watchlist preserves its playback History. Explicit History removal remains separate.",
+            "Fixed Home View all pagination so it continues beyond row previews without duplicate cards or incorrect add-on offsets.",
+            "Profile titles, artwork and hover descriptions follow the viewerâ€™s metadata and image-language preferences.",
+            "Fixed SIMKL ratings appearing unsaved when reopening titles identified by IMDb, TMDB or MAL.",
+            "Improved recovery of missing or partial IMDb episode ratings and stale or failed MDBList score lookups.",
+            "Ratings pagination now stays with the selected profile and filter when requests overlap.",
+            "Settings search opens the correct tab and scrolls to the requested setting; corrected the shared settings-section type.",
+            "Downloads Back navigation preserves the previous destination, and episode-to-series navigation restores the existing season and scroll position.",
+            "Fixed scrolling in Related Anime and Adaptations, including right-to-left row navigation.",
+            "Fixed Recent Activity View all being covered by enlarged posters and oversized consensus-ranking icons in ElegantFin.",
+            "EPG matching remains accessible from the channel column, including rematching and clearing an existing assignment."
+          ]
+        },
+        {
+          "heading": "Interface and Big Picture",
+          "items": [
+            "Restored the original outside row arrows and prevented first/last card hover effects from being clipped at row edges.",
+            "Fixed transparent Stremio-style surfaces caused by the canvas color declaration.",
+            "Corrected nested page-background dragging while preserving interactive controls, drag settings and fullscreen behavior.",
+            "Search dragging now respects drag-anywhere settings, cancels released gestures and restores focus without the backdrop press distortion.",
+            "Full-quality hero artwork now applies on ordinary displays, and Big Picture respects the selected image and trailer quality.",
+            "Improved Big Picture controller hints and focused quick-panel contrast; prevented the generic keyboard and Search keyboard opening together.",
+            "Added the option to disable Big Picture backdrop zoom.",
+            "Ctrl+1 through Ctrl+9 jump to tabs, and Ctrl+Tab cycles through them.",
+            "Fixed external links opening twice and the lower image fade lifting away during scrolling.",
+            "Removed the redundant back button inside music genre pages while retaining it for themes that need it.",
+            "Retained the existing correct right-to-left settings chevrons and profile toggles when reconciling older PRs."
+          ]
+        },
+        {
+          "heading": "eBooks and packaging",
+          "items": [
+            "Added book collections including top books, film adaptations and New York Times lists.",
+            "Development builds no longer try to update or recover the installed release.",
+            "Manual update downloads now require the correct platform and architecture instead of offering an ARM Mac or Windows download to an unsupported platform.",
+            "Improved macOS thumbnail-helper bundling and dependency/architecture checks.",
+            "Corrected the Windows libmpv download pin to the release matching its required checksum."
+          ]
+        },
+        {
+          "heading": "Merged community fixes",
+          "items": [
+            "17 reviewed PRs were merged into beta: #1429, #1461, #1463, #1141, #1377, #1427, #1464, #1091, #1454, #1199, #1142, #1357, #1369, #1138, #1092, #1458 and #1459. The fixes are detailed above; the two RTL reconciliations retain fixes already present. Thanks to the original contributors and everyone testing and reporting issues."
+          ]
+        },
+        {
+          "heading": "Mobile and TV",
+          "items": [
+            "We are still working on mobile and TV. There is no ETA on either. We would rather ship them making the most of our newer features, including music, than rush something out. We appreciate and value all the feedback from the circulating TV betas."
+          ]
+        },
+        {
+          "heading": "What is next",
+          "items": [
+            "More is already in progress. Another beta follows in the next few days with additional content, and these notes will be expanded as that work lands."
+          ]
+        },
+        {
+          "heading": "Thank you again for trying Harbor and making it better!",
+          "items": ["Thank you again for trying Harbor and making it better!"]
+        },
+        {
+          "heading": "Reference installer reconstruction",
+          "items": [
+            "Preserves the cloud-settings sync found in the supplied 0.9.127 EXE. The reference frontend was recovered from the binary and compared structurally with historical 0.9.127 source ac12a44691c15ba3b32f0a979f6a2569536ac6f1. Upgraded using public beta snapshot 25e5575fa4db3e1d8aee2932393c68fe983184f9. Android-extension runtime remains excluded."
+          ]
+        }
+      ]
+    }
+  }
+}

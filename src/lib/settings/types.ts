@@ -94,6 +94,15 @@ export type ScreensaverMedia = {
   kind: ScreensaverMediaKind;
 };
 
+export type MusicSpeedPreset = {
+  id: string;
+  name: string;
+  speed: number;
+  pitch: number;
+  reverb: number;
+  keepPitch: boolean;
+};
+
 export type Settings = {
   soundTheme: "none" | "glass" | "modern" | "retro" | "cinematic";
   sfxVolume: number;
@@ -194,7 +203,7 @@ export type Settings = {
   navIconAnimations: boolean;
   bigPicturePlayerUi: "tenFoot" | "desktop";
   screensaver: boolean;
-  screensaverStyle: "ambient" | "catBoat" | "custom";
+  screensaverStyle: "ambient" | "catBoat" | "halloween" | "custom";
   screensaverMedia: ScreensaverMedia[];
   screensaverMediaId: string | null;
   screensaverDelayMin: number;
@@ -266,7 +275,10 @@ export type Settings = {
   discordShowPoster: boolean;
   discordShowTimestamp: boolean;
   discordShowPartyJoin: boolean;
+  discordMusicPresence: boolean;
   playerEngine: "auto" | "html5" | "mpv";
+  /** resize shrinks the Harbor window; native floats the video in its own window. */
+  pipBehavior: "resize" | "native";
   playerShellId: string;
   playerChromeTheme: "auto" | "default" | "stremio";
   playerMenuBlack: boolean;
@@ -305,6 +317,7 @@ export type Settings = {
   streamCacheMaxGb: number;
   deleteWatchedDownloads: boolean;
   streamCacheDir: string;
+  playbackCacheDir: string;
   remoteStreamServerUrl: string;
   remoteStreamServerStrict: boolean;
   castAlwaysTranscode: boolean;
@@ -386,6 +399,11 @@ export type Settings = {
   playbackSourcePreference: "ask" | "local" | "online" | "home-server";
   preferredMediaServerId: string | null;
   localMinFileSizeMb: number;
+  /** Re-scan the folders already in the local library on open, adding only files it has not seen.
+   * Existing entries are never rebuilt, so anything corrected with Identify stays corrected. */
+  localAutoScan: boolean;
+  /** How an auto-scan identifies a new file, remembered from the last manual scan. */
+  localScanMode: "tmdb" | "nfo" | null;
   catalogsPinned: string[];
   catalogsHidden: string[];
   posterBaseUrl: string;
@@ -432,6 +450,7 @@ export type Settings = {
   playerSvp: boolean;
   svpVpyPath: string;
   svpScope: "all" | "anime" | "non-anime";
+  svpTargetFps: "double" | "48" | "60" | "display";
   seekBackStepSec: number;
   seekForwardStepSec: number;
   seekBackStepShortSec: number;
@@ -487,6 +506,8 @@ export type Settings = {
   defaultProfileId: string;
   sportsLeagues: string[];
   sportsShowOdds: boolean;
+  /** Scores and schedules need no provider; streams do. Off until asked for. */
+  sportsWithoutProvider: boolean;
   hideSpoilers: boolean;
   spoilerHideThumbnails: boolean;
   spoilerHideTitles: boolean;
@@ -502,6 +523,10 @@ export type Settings = {
   customLogoWordmark: string;
   customAppIcon: string;
   customAppIconPreset: string;
+  musicArtworkAppIcon: boolean;
+  musicSeekThumb: boolean;
+  musicSeekThumbHover: boolean;
+  musicSpeedPresets: MusicSpeedPreset[];
   homeMode: "harbor" | "classic";
   homeShowAllAddonRows: boolean;
   homeNewEpisodes: boolean;
@@ -528,9 +553,18 @@ export type Settings = {
   dragAnywhere: boolean;
   resumeDetailScroll: boolean;
   pluginsEnabled: boolean;
+  /** Whether anything outside the Plugins page may ask a plugin that stands up rows of its own.
+   * Off by default, so those extensions are asked on their own page only. A plugin with no rows of
+   * its own is asked either way, because nothing else would ever reach it. */
+  pluginsOutsideTab: boolean;
   pluginsGroupByRepo: boolean;
   pluginsAutoCheck: boolean;
   pluginsBackground: boolean;
+  /** Badges on the Plugins tab's posters, read out of the listing titles a provider sends. Off by
+   * default: a provider's title carries whatever it wants to say, and not everyone wants a poster
+   * with a language strip on it. */
+  pluginsPosterLanguages: boolean;
+  pluginsPosterQuality: boolean;
   cwPerProfile: boolean;
   closeToTray: boolean;
   trayAlwaysOnTop: boolean;
@@ -594,6 +628,7 @@ export type Settings = {
   seekBarFill: boolean;
   seekBarFillOpacity: number;
   seekDotShape: "circle" | "square" | "image" | "hidden";
+  seekDotHover: boolean;
   seekDotSize: number;
   seekDotImage: string;
   customCss: string;

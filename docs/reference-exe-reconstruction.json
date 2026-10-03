@@ -1,0 +1,23 @@
+{
+  "referenceInstaller": "Harbor_0.9.127_cloud-settings-sync_no-extension-runtime_x64-setup.exe",
+  "referenceSha256": "c5f295521b259d3cec98d6ad06ee12e8024816158ca2c5402d086ea3272d255e",
+  "referenceAppSha256": "6c90fb5e8c59c08beffca8c33ef608495403edd2ef6fae4ad25f7026454ddac5",
+  "embeddedBuildId": "40b1aa0e",
+  "embeddedBuildDate": "2026-09-26",
+  "historicalSource": "ac12a44691c15ba3b32f0a979f6a2569536ac6f1",
+  "publicBetaUpgrade": "25e5575fa4db3e1d8aee2932393c68fe983184f9",
+  "referenceFrontendAssetsRecovered": 1093,
+  "mainNamedFunctionComparison": {
+    "equal": 8449,
+    "missing": 0,
+    "changed": 0,
+    "addedTauriSdkHelpers": 4,
+    "normalization": "Identifier spellings and Vite filenames normalized; structural agreement is not byte-identical or semantic proof"
+  },
+  "customSourceChanges": "13 cloud-settings source/test files retained; no separate Hungarian/player branch merged",
+  "installerPolicy": "Original NSIS current-user mode, original hooks and default WebView2 bootstrap policy retained; no offline runtime installer repair introduced",
+  "limits": [
+    "Native machine code cannot prove byte-identical source reconstruction",
+    "Official 0.9.129 source commit is not published; public beta snapshot is pinned"
+  ]
+}
