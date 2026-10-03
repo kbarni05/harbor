@@ -114,3 +114,6 @@ crowdin_credentials.*
 gemini.key
 /.firecrawl
 /work
+
+# Required ebook translation prompt imported by the application
+!src/lib/ebook/translation-chapter-instructions.md

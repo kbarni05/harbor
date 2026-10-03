@@ -19,5 +19,11 @@
   "limits": [
     "Native machine code cannot prove byte-identical source reconstruction",
     "Official 0.9.129 source commit is not published; public beta snapshot is pinned"
-  ]
+  ],
+  "recoveredMissingUpstreamResource": {
+    "path": "src/lib/ebook/translation-chapter-instructions.md",
+    "source": "Official 0.9.129 Windows EXE embedded ebook-BTePwelD.js literal",
+    "sha256": "a12527470c738dcf8cadcb751dba42b6a2202568b04007640b515c124ef184b4",
+    "bytes": 2271
+  }
 }
