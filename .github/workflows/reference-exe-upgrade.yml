@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: reference-exe-upgrade-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -47,6 +51,7 @@ jobs:
         run: >-
           node --experimental-loader ./scripts/node-test-loader.mjs --test
           tests/cloud-settings-sync.test.ts tests/reference-exe-upgrade.test.mjs
+          tests/beta-127-version.test.ts
       - name: Test strict NSIS comparison
         run: ./scripts/test-nsis-payload.ps1
       - name: Check Windows source
